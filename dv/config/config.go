@@ -48,6 +48,8 @@ type Config struct {
 	PrefixInsertionTrustAnchors []string `json:"prefix_insertion_trust_anchors"`
 	// List of permanent neighbors.
 	Neighbors []Neighbor `json:"neighbors"`
+	// Replicate Prefix Egress State into forwarder PET.
+	PrefixEgreStateReplicate bool `json:"prefix_egre_state_replicate"`
 
 	// Parsed Global Prefix
 	networkNameN enc.Name
@@ -61,9 +63,9 @@ type Config struct {
 	advSyncPassivePfxN enc.Name
 	// Advertisement Data Prefix
 	advDataPfxN enc.Name
-	// Prefix Table Sync Prefix
+	// Prefix Sync Prefix
 	pfxSyncGroupPfxN enc.Name
-	// NLSR readvertise prefix
+	// Local management prefix
 	mgmtPrefix enc.Name
 	// Trust anchor names
 	trustAnchorsN []enc.Name
@@ -93,6 +95,7 @@ func DefaultConfig() *Config {
 		KeyChainUri:                  "undefined",
 		PrefixInsertionSchemaPath:    "deny",
 		PrefixInsertionKeychainUri:   "undefined",
+		PrefixEgreStateReplicate:     true,
 	}
 }
 
@@ -172,14 +175,14 @@ func (c *Config) Parse() (err error) {
 		Append(enc.NewKeywordComponent("DV")).
 		Append(enc.NewKeywordComponent("ADV"))
 
-	// Prefix table sync prefix
+	// Prefix sync prefix
 	c.pfxSyncGroupPfxN = c.networkNameN.
 		Append(enc.NewKeywordComponent("DV")).
 		Append(enc.NewKeywordComponent("PFS"))
 
 	// Local prefixes to NFD
 	c.mgmtPrefix = enc.LOCALHOST.
-		Append(enc.NewGenericComponent("nlsr"))
+		Append(enc.NewGenericComponent("dv"))
 
 	return nil
 }
@@ -214,9 +217,13 @@ func (c *Config) AdvertisementDataPrefix() enc.Name {
 	return c.advDataPfxN
 }
 
-// (AI GENERATED DESCRIPTION): Retrieves the prefix table group prefix stored in the configuration.
-func (c *Config) PrefixTableGroupPrefix() enc.Name {
+// PrefixEgreStatePrefix returns the prefix egress state sync prefix.
+func (c *Config) PrefixEgreStatePrefix() enc.Name {
 	return c.pfxSyncGroupPfxN
+}
+
+func (c *Config) PrefixEgreStateReplicationEnabled() bool {
+	return c.PrefixEgreStateReplicate
 }
 
 // (AI GENERATED DESCRIPTION): Returns the management prefix stored in the Config object.

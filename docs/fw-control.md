@@ -94,52 +94,52 @@ ndnd fw route-remove prefix=/example face=6 origin=65
 
 The fib-list command prints the existing FIB entries.
 
-## `ndnd fw pib-list`
+## `ndnd fw pet-list`
 
-The pib-list command prints the existing PIB entries.
+The pet-list command prints the existing PET entries.
 
-## `ndnd fw pib-add-egress`
+## `ndnd fw pet-add-egress`
 
-The pib-add-prefix command adds an egress router to a PIB entry. The supported arguments are:
+The pet-add-egress command adds an egress router to a PET entry. The supported arguments are:
 
-- `prefix=<prefix>` The name prefix of the PIB entry.
+- `prefix=<prefix>` The name prefix of the PET entry.
 - `egress=<egress-name>` The egress name
 
 ```bash
-./ndnd fw pib-add-egress prefix=/example egress=/egress-name
+./ndnd fw pet-add-egress prefix=/example egress=/egress-name
 ```
 
-## `ndnd fw pib-remove-egress`
+## `ndnd fw pet-remove-egress`
 
-The pib-add-prefix command removes an egress router to a PIB entry. The supported arguments are:
+The pet-remove-egress command removes an egress router from a PET entry. The supported arguments are:
 
-- `prefix=<prefix>` The name prefix of the PIB entry.
+- `prefix=<prefix>` The name prefix of the PET entry.
 - `egress=<egress-name>` The egress name
 
 ```bash
-./ndnd fw pib-remove-egress prefix=/example egress=/egress-name
+./ndnd fw pet-remove-egress prefix=/example egress=/egress-name
 ```
 
-## `ndnd fw pib-add-nexthop`
+## `ndnd fw pet-add-nexthop`
 
-The pib-add-nexthop command adds a next hop to a PIB entry (for local forwarding). The supported arguments are:
+The pet-add-nexthop command adds a next hop to a PET entry (for local forwarding). The supported arguments are:
 
-- `prefix=<prefix>`: The name prefix of the PIB entry.
+- `prefix=<prefix>`: The name prefix of the PET entry.
 - `face=<face-id>|<face-uri>`: The next hop face ID to add (must be a valid face).
 
 ```bash
-ndnd fw pib-add-nexthop prefix=/example face=6
+ndnd fw pet-add-nexthop prefix=/example face=6
 ```
 
-## `ndnd fw pib-remove-nexthop`
+## `ndnd fw pet-remove-nexthop`
 
-The pib-remove-nexthop command removes a nexthop from a PIB entry. The supported arguments are:
+The pet-remove-nexthop command removes a nexthop from a PET entry. The supported arguments are:
 
-- `prefix=<prefix>`: The name prefix of the PIB entry.
+- `prefix=<prefix>`: The name prefix of the PET entry.
 - `face=<face-id>|<face-uri>`: The next hop face ID to remove.
 
 ```bash
-ndnd fw pib-remove-nexthop prefix=/example face=6
+ndnd fw pet-remove-nexthop prefix=/example face=6
 ```
 
 ## `ndnd fw cs-info`

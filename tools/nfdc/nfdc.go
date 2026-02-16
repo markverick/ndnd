@@ -66,32 +66,32 @@ func Cmds() []*cobra.Command {
 		Args:  cobra.NoArgs,
 		Run:   t.ExecFibList,
 	}, {
-		Use:   "pib-list",
-		Short: "Print PIB entries",
+		Use:   "pet-list",
+		Short: "Print Prefix Egress Table (PET) entries",
 		Args:  cobra.NoArgs,
-		Run:   t.ExecPibList,
+		Run:   t.ExecPetList,
 	}, {
-		Use:   "pib-add-egress [params]",
-		Short: "Add an egress router to the PIB",
+		Use:   "pet-add-egress [params]",
+		Short: "Add an egress router to the Prefix Egress Table (PET)",
 		Args:  cobra.ArbitraryArgs,
-		Run:   cmd("pib", "add-egress", []string{}),
+		Run:   cmd("pet", "add-egress", []string{}),
 	}, {
-		Use:   "pib-remove-egress [params]",
-		Short: "Remove an egress router from the PIB",
+		Use:   "pet-remove-egress [params]",
+		Short: "Remove an egress router from the Prefix Egress Table (PET)",
 		Args:  cobra.ArbitraryArgs,
-		Run:   cmd("pib", "remove-egress", []string{}),
+		Run:   cmd("pet", "remove-egress", []string{}),
 	}, {
-		Use:   "pib-add-nexthop [params]",
-		Short: "Add a nexthop to the PIB",
+		Use:   "pet-add-nexthop [params]",
+		Short: "Add a nexthop to the Prefix Egress Table (PET)",
 		Args:  cobra.ArbitraryArgs,
-		Run: cmd("pib", "add-nexthop", []string{
+		Run: cmd("pet", "add-nexthop", []string{
 			"cost=0",
 		}),
 	}, {
-		Use:   "pib-remove-nexthop [params]",
-		Short: "Remove a nexthop from the PIB",
+		Use:   "pet-remove-nexthop [params]",
+		Short: "Remove a nexthop from the Prefix Egress Table (PET)",
 		Args:  cobra.ArbitraryArgs,
-		Run:   cmd("pib", "remove-nexthop", []string{}),
+		Run:   cmd("pet", "remove-nexthop", []string{}),
 	}, {
 		Use:   "cs-info",
 		Short: "Print content store info",

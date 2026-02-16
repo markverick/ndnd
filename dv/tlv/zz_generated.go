@@ -741,7 +741,7 @@ func ParseDestination(reader enc.WireView, ignoreCritical bool) (*Destination, e
 type PrefixOpListEncoder struct {
 	Length uint
 
-	ExitRouter_encoder DestinationEncoder
+	EgressRouter_encoder DestinationEncoder
 
 	PrefixOpAdds_subencoder []struct {
 		PrefixOpAdds_encoder PrefixOpAddEncoder
@@ -752,15 +752,15 @@ type PrefixOpListEncoder struct {
 }
 
 type PrefixOpListParsingContext struct {
-	ExitRouter_context DestinationParsingContext
+	EgressRouter_context DestinationParsingContext
 
 	PrefixOpAdds_context    PrefixOpAddParsingContext
 	PrefixOpRemoves_context PrefixOpRemoveParsingContext
 }
 
 func (encoder *PrefixOpListEncoder) Init(value *PrefixOpList) {
-	if value.ExitRouter != nil {
-		encoder.ExitRouter_encoder.Init(value.ExitRouter)
+	if value.EgressRouter != nil {
+		encoder.EgressRouter_encoder.Init(value.EgressRouter)
 	}
 
 	{
@@ -811,10 +811,10 @@ func (encoder *PrefixOpListEncoder) Init(value *PrefixOpList) {
 	}
 
 	l := uint(0)
-	if value.ExitRouter != nil {
+	if value.EgressRouter != nil {
 		l += 1
-		l += uint(enc.TLNum(encoder.ExitRouter_encoder.Length).EncodingLength())
-		l += encoder.ExitRouter_encoder.Length
+		l += uint(enc.TLNum(encoder.EgressRouter_encoder.Length).EncodingLength())
+		l += encoder.EgressRouter_encoder.Length
 	}
 	if value.PrefixOpReset {
 		l += 3
@@ -867,7 +867,7 @@ func (encoder *PrefixOpListEncoder) Init(value *PrefixOpList) {
 }
 
 func (context *PrefixOpListParsingContext) Init() {
-	context.ExitRouter_context.Init()
+	context.EgressRouter_context.Init()
 
 	context.PrefixOpAdds_context.Init()
 	context.PrefixOpRemoves_context.Init()
@@ -877,13 +877,13 @@ func (encoder *PrefixOpListEncoder) EncodeInto(value *PrefixOpList, buf []byte) 
 
 	pos := uint(0)
 
-	if value.ExitRouter != nil {
+	if value.EgressRouter != nil {
 		buf[pos] = byte(204)
 		pos += 1
-		pos += uint(enc.TLNum(encoder.ExitRouter_encoder.Length).EncodeInto(buf[pos:]))
-		if encoder.ExitRouter_encoder.Length > 0 {
-			encoder.ExitRouter_encoder.EncodeInto(value.ExitRouter, buf[pos:])
-			pos += encoder.ExitRouter_encoder.Length
+		pos += uint(enc.TLNum(encoder.EgressRouter_encoder.Length).EncodeInto(buf[pos:]))
+		if encoder.EgressRouter_encoder.Length > 0 {
+			encoder.EgressRouter_encoder.EncodeInto(value.EgressRouter, buf[pos:])
+			pos += encoder.EgressRouter_encoder.Length
 		}
 	}
 	if value.PrefixOpReset {
@@ -959,7 +959,7 @@ func (encoder *PrefixOpListEncoder) Encode(value *PrefixOpList) enc.Wire {
 
 func (context *PrefixOpListParsingContext) Parse(reader enc.WireView, ignoreCritical bool) (*PrefixOpList, error) {
 
-	var handled_ExitRouter bool = false
+	var handled_EgressRouter bool = false
 	var handled_PrefixOpReset bool = false
 	var handled_PrefixOpAdds bool = false
 	var handled_PrefixOpRemoves bool = false
@@ -992,8 +992,8 @@ func (context *PrefixOpListParsingContext) Parse(reader enc.WireView, ignoreCrit
 			case 204:
 				if true {
 					handled = true
-					handled_ExitRouter = true
-					value.ExitRouter, err = context.ExitRouter_context.Parse(reader.Delegate(int(l)), ignoreCritical)
+					handled_EgressRouter = true
+					value.EgressRouter, err = context.EgressRouter_context.Parse(reader.Delegate(int(l)), ignoreCritical)
 				}
 			case 302:
 				if true {
@@ -1060,8 +1060,8 @@ func (context *PrefixOpListParsingContext) Parse(reader enc.WireView, ignoreCrit
 	startPos = reader.Pos()
 	err = nil
 
-	if !handled_ExitRouter && err == nil {
-		value.ExitRouter = nil
+	if !handled_EgressRouter && err == nil {
+		value.EgressRouter = nil
 	}
 	if !handled_PrefixOpReset && err == nil {
 		value.PrefixOpReset = false
@@ -1100,9 +1100,12 @@ type PrefixOpAddEncoder struct {
 	Length uint
 
 	Name_length uint
+
+	ValidityPeriod_encoder spec_2022.ValidityPeriodEncoder
 }
 
 type PrefixOpAddParsingContext struct {
+	ValidityPeriod_context spec_2022.ValidityPeriodParsingContext
 }
 
 func (encoder *PrefixOpAddEncoder) Init(value *PrefixOpAdd) {
@@ -1113,20 +1116,32 @@ func (encoder *PrefixOpAddEncoder) Init(value *PrefixOpAdd) {
 		}
 	}
 
+	if value.ValidityPeriod != nil {
+		encoder.ValidityPeriod_encoder.Init(value.ValidityPeriod)
+	}
+
 	l := uint(0)
 	if value.Name != nil {
 		l += 1
 		l += uint(enc.TLNum(encoder.Name_length).EncodingLength())
 		l += encoder.Name_length
 	}
-	l += 1
-	l += uint(1 + enc.Nat(value.Cost).EncodingLength())
+	if value.Multicast {
+		l += 1
+		l += 1
+	}
+	if value.ValidityPeriod != nil {
+		l += 3
+		l += uint(enc.TLNum(encoder.ValidityPeriod_encoder.Length).EncodingLength())
+		l += encoder.ValidityPeriod_encoder.Length
+	}
 	encoder.Length = l
 
 }
 
 func (context *PrefixOpAddParsingContext) Init() {
 
+	context.ValidityPeriod_context.Init()
 }
 
 func (encoder *PrefixOpAddEncoder) EncodeInto(value *PrefixOpAdd, buf []byte) {
@@ -1141,11 +1156,22 @@ func (encoder *PrefixOpAddEncoder) EncodeInto(value *PrefixOpAdd, buf []byte) {
 			pos += uint(c.EncodeInto(buf[pos:]))
 		}
 	}
-	buf[pos] = byte(208)
-	pos += 1
-
-	buf[pos] = byte(enc.Nat(value.Cost).EncodeInto(buf[pos+1:]))
-	pos += uint(1 + buf[pos])
+	if value.Multicast {
+		buf[pos] = byte(208)
+		pos += 1
+		buf[pos] = byte(0)
+		pos += 1
+	}
+	if value.ValidityPeriod != nil {
+		buf[pos] = 253
+		binary.BigEndian.PutUint16(buf[pos+1:], uint16(253))
+		pos += 3
+		pos += uint(enc.TLNum(encoder.ValidityPeriod_encoder.Length).EncodeInto(buf[pos:]))
+		if encoder.ValidityPeriod_encoder.Length > 0 {
+			encoder.ValidityPeriod_encoder.EncodeInto(value.ValidityPeriod, buf[pos:])
+			pos += encoder.ValidityPeriod_encoder.Length
+		}
+	}
 }
 
 func (encoder *PrefixOpAddEncoder) Encode(value *PrefixOpAdd) enc.Wire {
@@ -1161,7 +1187,8 @@ func (encoder *PrefixOpAddEncoder) Encode(value *PrefixOpAdd) enc.Wire {
 func (context *PrefixOpAddParsingContext) Parse(reader enc.WireView, ignoreCritical bool) (*PrefixOpAdd, error) {
 
 	var handled_Name bool = false
-	var handled_Cost bool = false
+	var handled_Multicast bool = false
+	var handled_ValidityPeriod bool = false
 
 	progress := -1
 	_ = progress
@@ -1198,21 +1225,15 @@ func (context *PrefixOpAddParsingContext) Parse(reader enc.WireView, ignoreCriti
 			case 208:
 				if true {
 					handled = true
-					handled_Cost = true
-					value.Cost = uint64(0)
-					{
-						for i := 0; i < int(l); i++ {
-							x := byte(0)
-							x, err = reader.ReadByte()
-							if err != nil {
-								if err == io.EOF {
-									err = io.ErrUnexpectedEOF
-								}
-								break
-							}
-							value.Cost = uint64(value.Cost<<8) | uint64(x)
-						}
-					}
+					handled_Multicast = true
+					value.Multicast = true
+					err = reader.Skip(int(l))
+				}
+			case 253:
+				if true {
+					handled = true
+					handled_ValidityPeriod = true
+					value.ValidityPeriod, err = context.ValidityPeriod_context.Parse(reader.Delegate(int(l)), ignoreCritical)
 				}
 			default:
 				if !ignoreCritical && ((typ <= 31) || ((typ & 1) == 1)) {
@@ -1235,8 +1256,11 @@ func (context *PrefixOpAddParsingContext) Parse(reader enc.WireView, ignoreCriti
 	if !handled_Name && err == nil {
 		value.Name = nil
 	}
-	if !handled_Cost && err == nil {
-		err = enc.ErrSkipRequired{Name: "Cost", TypeNum: 208}
+	if !handled_Multicast && err == nil {
+		value.Multicast = false
+	}
+	if !handled_ValidityPeriod && err == nil {
+		value.ValidityPeriod = nil
 	}
 
 	if err != nil {
@@ -1916,14 +1940,11 @@ type PrefixInsertionInnerContentParsingContext struct {
 }
 
 func (encoder *PrefixInsertionInnerContentEncoder) Init(value *PrefixInsertionInnerContent) {
-
 	if value.ValidityPeriod != nil {
 		encoder.ValidityPeriod_encoder.Init(value.ValidityPeriod)
 	}
 
 	l := uint(0)
-	l += 1
-	l += uint(1 + enc.Nat(value.ExpirationPeriod).EncodingLength())
 	if value.ValidityPeriod != nil {
 		l += 3
 		l += uint(enc.TLNum(encoder.ValidityPeriod_encoder.Length).EncodingLength())
@@ -1938,7 +1959,6 @@ func (encoder *PrefixInsertionInnerContentEncoder) Init(value *PrefixInsertionIn
 }
 
 func (context *PrefixInsertionInnerContentParsingContext) Init() {
-
 	context.ValidityPeriod_context.Init()
 
 }
@@ -1947,11 +1967,6 @@ func (encoder *PrefixInsertionInnerContentEncoder) EncodeInto(value *PrefixInser
 
 	pos := uint(0)
 
-	buf[pos] = byte(109)
-	pos += 1
-
-	buf[pos] = byte(enc.Nat(value.ExpirationPeriod).EncodeInto(buf[pos+1:]))
-	pos += uint(1 + buf[pos])
 	if value.ValidityPeriod != nil {
 		buf[pos] = 253
 		binary.BigEndian.PutUint16(buf[pos+1:], uint16(253))
@@ -1984,7 +1999,6 @@ func (encoder *PrefixInsertionInnerContentEncoder) Encode(value *PrefixInsertion
 
 func (context *PrefixInsertionInnerContentParsingContext) Parse(reader enc.WireView, ignoreCritical bool) (*PrefixInsertionInnerContent, error) {
 
-	var handled_ExpirationPeriod bool = false
 	var handled_ValidityPeriod bool = false
 	var handled_Cost bool = false
 
@@ -2013,25 +2027,6 @@ func (context *PrefixInsertionInnerContentParsingContext) Parse(reader enc.WireV
 		err = nil
 		if handled := false; true {
 			switch typ {
-			case 109:
-				if true {
-					handled = true
-					handled_ExpirationPeriod = true
-					value.ExpirationPeriod = uint64(0)
-					{
-						for i := 0; i < int(l); i++ {
-							x := byte(0)
-							x, err = reader.ReadByte()
-							if err != nil {
-								if err == io.EOF {
-									err = io.ErrUnexpectedEOF
-								}
-								break
-							}
-							value.ExpirationPeriod = uint64(value.ExpirationPeriod<<8) | uint64(x)
-						}
-					}
-				}
 			case 253:
 				if true {
 					handled = true
@@ -2079,9 +2074,6 @@ func (context *PrefixInsertionInnerContentParsingContext) Parse(reader enc.WireV
 	startPos = reader.Pos()
 	err = nil
 
-	if !handled_ExpirationPeriod && err == nil {
-		err = enc.ErrSkipRequired{Name: "ExpirationPeriod", TypeNum: 109}
-	}
 	if !handled_ValidityPeriod && err == nil {
 		value.ValidityPeriod = nil
 	}

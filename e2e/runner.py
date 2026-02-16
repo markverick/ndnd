@@ -41,8 +41,7 @@ if __name__ == '__main__':
     ndn = Minindn()
     ndn.start()
 
-    run(test_001.scenario_ndnd_fw)
-    run(test_001.scenario_nfd)
+    run(test_001.scenario)
     run(test_002.scenario)
 
     ndn.stop()

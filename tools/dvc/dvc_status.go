@@ -14,11 +14,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// (AI GENERATED DESCRIPTION): Queries the local Dv service status by expressing a fresh interest on the name `localhost/nlsr/status`, waits for the returned Data packet, parses its content into a `spec_dv.Status` object, and returns that status.
+// (AI GENERATED DESCRIPTION): Queries the local Dv service status by expressing a fresh interest on the name `localhost/dv/status`, waits for the returned Data packet, parses its content into a `spec_dv.Status` object, and returns that status.
 func (t *Tool) DvStatus() (*spec_dv.Status, error) {
 	name := enc.Name{
 		enc.LOCALHOST,
-		enc.NewGenericComponent("nlsr"),
+		enc.NewGenericComponent("dv"),
 		enc.NewGenericComponent("status"),
 	}
 	cfg := &ndn.InterestConfig{

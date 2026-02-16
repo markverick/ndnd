@@ -59,7 +59,7 @@ func MakeMgmtThread() *Thread {
 	m.registerModule("cs", new(ContentStoreModule))
 	m.registerModule("faces", new(FaceModule))
 	m.registerModule("fib", new(FIBModule))
-	m.registerModule("pib", new(PIBModule))
+	m.registerModule("pet", newPETModule())
 	m.registerModule("rib", new(RIBModule))
 	m.registerModule("status", new(ForwarderStatusModule))
 	m.registerModule("strategy-choice", new(StrategyChoiceModule))
@@ -85,9 +85,9 @@ func (m *Thread) Run() {
 
 	// Create and register Internal transport
 	m.face, m.transport = face.RegisterInternalTransport()
-	table.Pib.AddNextHopEnc(LOCAL_PREFIX, m.face.FaceID(), 0)
+	table.Pet.AddNextHopEnc(LOCAL_PREFIX, m.face.FaceID(), 0)
 	if core.C.Mgmt.AllowLocalhop {
-		table.Pib.AddNextHopEnc(NON_LOCAL_PREFIX, m.face.FaceID(), 0)
+		table.Pet.AddNextHopEnc(NON_LOCAL_PREFIX, m.face.FaceID(), 0)
 	}
 
 	for {

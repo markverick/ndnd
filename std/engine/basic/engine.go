@@ -572,13 +572,15 @@ func (e *Engine) Express(interest *ndn.EncodedInterest, callback ndn.ExpressCall
 
 	// Wrap the interest in link packet if needed
 	wire := interest.Wire
-	if interest.Config.NextHopId.IsSet() {
-		lpPkt := &spec.Packet{
-			LpPacket: &spec.LpPacket{
-				Fragment:      wire,
-				NextHopFaceId: interest.Config.NextHopId,
-			},
+	if interest.Config.NextHopId.IsSet() || len(interest.Config.EgressRouter) > 0 {
+		lp := &spec.LpPacket{Fragment: wire}
+		if interest.Config.NextHopId.IsSet() {
+			lp.NextHopFaceId = interest.Config.NextHopId
 		}
+		if len(interest.Config.EgressRouter) > 0 {
+			lp.EgressRouter = &spec.EgressRouter{Name: interest.Config.EgressRouter}
+		}
+		lpPkt := &spec.Packet{LpPacket: lp}
 		encoder := spec.PacketEncoder{}
 		encoder.Init(lpPkt)
 		wire = encoder.Encode(lpPkt)
@@ -673,9 +675,9 @@ func (e *Engine) SetCmdSec(signer ndn.Signer, validator func(enc.Name, enc.Wire,
 	e.cmdChecker = validator
 }
 
-// (AI GENERATED DESCRIPTION): Registers the supplied name prefix with the engine’s PIB by issuing a PIB add‑nexthop command.
+// (AI GENERATED DESCRIPTION): Registers the supplied name prefix with the engine’s PET by issuing a PET add‑nexthop command.
 func (e *Engine) RegisterRoute(prefix enc.Name) error {
-	_, err := e.ExecMgmtCmd("pib", "add-nexthop", &mgmt.ControlArgs{Name: prefix})
+	_, err := e.ExecMgmtCmd("pet", "add-nexthop", &mgmt.ControlArgs{Name: prefix})
 	if err != nil {
 		log.Error(e, "Failed to register prefix", "err", err, "name", prefix)
 		return err
@@ -685,9 +687,9 @@ func (e *Engine) RegisterRoute(prefix enc.Name) error {
 	return nil
 }
 
-// (AI GENERATED DESCRIPTION): Unregisters the specified NDN prefix from the Engine’s PIB by issuing a PIB remove‑nexthop command and logs the result.
+// (AI GENERATED DESCRIPTION): Unregisters the specified NDN prefix from the Engine’s PET by issuing a PET remove‑nexthop command and logs the result.
 func (e *Engine) UnregisterRoute(prefix enc.Name) error {
-	_, err := e.ExecMgmtCmd("pib", "remove-nexthop", &mgmt.ControlArgs{Name: prefix})
+	_, err := e.ExecMgmtCmd("pet", "remove-nexthop", &mgmt.ControlArgs{Name: prefix})
 	if err != nil {
 		log.Error(e, "Failed to unregister prefix", "err", err, "name", prefix)
 		return err

@@ -169,13 +169,26 @@ func (ns *NeighborState) routeRegister(faceId uint64) {
 			Retries: 3,
 		})
 	}
+	registerPetEgress := func(route enc.Name) {
+		ns.nt.nfdc.Exec(nfdc.NfdMgmtCmd{
+			Module: "pet",
+			Cmd:    "add-egress",
+			Args: &mgmt.ControlArgs{
+				Name:   route,
+				Egress: &mgmt.EgressRecord{Name: route},
+			},
+			Retries: 3,
+		})
+	}
 
 	// For fetching advertisements from neighbor
-	register(ns.localRoute())
+	localRoute := ns.localRoute()
+	register(localRoute)
+	registerPetEgress(localRoute)
 	// Passive advertisement sync to neighbor
 	register(ns.nt.config.AdvertisementSyncPassivePrefix())
-	// For prefix table sync group
-	register(ns.nt.config.PrefixTableGroupPrefix().
+	// For prefix egress state sync group
+	register(ns.nt.config.PrefixEgreStatePrefix().
 		Append(enc.NewKeywordComponent("svs")))
 }
 
@@ -197,9 +210,22 @@ func (ns *NeighborState) routeUnregister() {
 			Retries: 1,
 		})
 	}
+	unregisterPetEgress := func(route enc.Name) {
+		ns.nt.nfdc.Exec(nfdc.NfdMgmtCmd{
+			Module: "pet",
+			Cmd:    "remove-egress",
+			Args: &mgmt.ControlArgs{
+				Name:   route,
+				Egress: &mgmt.EgressRecord{Name: route},
+			},
+			Retries: 1,
+		})
+	}
 
 	// Always remove local data routes to neighbor
-	unregister(ns.localRoute())
+	localRoute := ns.localRoute()
+	unregister(localRoute)
+	unregisterPetEgress(localRoute)
 
 	// If there are multiple neighbors on this face, we do not
 	// want to unregister the global routes to the face.
@@ -210,6 +236,6 @@ func (ns *NeighborState) routeUnregister() {
 	}
 
 	unregister(ns.nt.config.AdvertisementSyncPassivePrefix())
-	unregister(ns.nt.config.PrefixTableGroupPrefix().
+	unregister(ns.nt.config.PrefixEgreStatePrefix().
 		Append(enc.NewKeywordComponent("svs")))
 }

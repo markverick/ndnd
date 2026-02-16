@@ -16,31 +16,31 @@ import (
 	"github.com/named-data/ndnd/std/types/optional"
 )
 
-// PIBModule is the module that handles PIB Management.
-type PIBModule struct {
+// PETModule is the module that handles Prefix Egress Table (PET) management.
+type PETModule struct {
 	manager *Thread
 }
 
-// (AI GENERATED DESCRIPTION): Returns the identifier string "mgmt-pib" that represents the PIB module’s name.
-func (p *PIBModule) String() string {
-	return "mgmt-pib"
+func newPETModule() *PETModule {
+	return &PETModule{}
 }
 
-// (AI GENERATED DESCRIPTION): Registers the given Thread as the manager for this PIBModule by setting its manager field.
-func (p *PIBModule) registerManager(manager *Thread) {
+func (p *PETModule) String() string {
+	return "mgmt-pet"
+}
+
+func (p *PETModule) registerManager(manager *Thread) {
 	p.manager = manager
 }
 
-// (AI GENERATED DESCRIPTION): Returns the Thread manager associated with the PIBModule.
-func (p *PIBModule) getManager() *Thread {
+func (p *PETModule) getManager() *Thread {
 	return p.manager
 }
 
-// (AI GENERATED DESCRIPTION): Handles locally-issued PIB management Interests by dispatching to the requested verb.
-func (p *PIBModule) handleIncomingInterest(interest *Interest) {
+func (p *PETModule) handleIncomingInterest(interest *Interest) {
 	// Only allow from /localhost
 	if !LOCAL_PREFIX.IsPrefix(interest.Name()) {
-		core.Log.Warn(p, "Received PIB management Interest from non-local source - DROP")
+		core.Log.Warn(p, "Received PET management Interest from non-local source - DROP")
 		return
 	}
 
@@ -63,7 +63,7 @@ func (p *PIBModule) handleIncomingInterest(interest *Interest) {
 	}
 }
 
-func (p *PIBModule) addEgress(interest *Interest) {
+func (p *PETModule) addEgress(interest *Interest) {
 	if len(interest.Name()) < len(LOCAL_PREFIX)+3 {
 		p.manager.sendCtrlResp(interest, 400, "ControlParameters is incorrect", nil)
 		return
@@ -84,8 +84,8 @@ func (p *PIBModule) addEgress(interest *Interest) {
 		return
 	}
 
-	table.Pib.AddEgressEnc(params.Name, params.Egress.Name)
-	core.Log.Info(p, "Added PIB egress", "name", params.Name, "egress", params.Egress.Name)
+	table.Pet.AddEgressEnc(params.Name, params.Egress.Name)
+	core.Log.Info(p, "Added PET egress", "name", params.Name, "egress", params.Egress.Name)
 
 	p.manager.sendCtrlResp(interest, 200, "OK", &mgmt.ControlArgs{
 		Name:   params.Name,
@@ -93,7 +93,7 @@ func (p *PIBModule) addEgress(interest *Interest) {
 	})
 }
 
-func (p *PIBModule) removeEgress(interest *Interest) {
+func (p *PETModule) removeEgress(interest *Interest) {
 	if len(interest.Name()) < len(LOCAL_PREFIX)+3 {
 		p.manager.sendCtrlResp(interest, 400, "ControlParameters is incorrect", nil)
 		return
@@ -114,8 +114,8 @@ func (p *PIBModule) removeEgress(interest *Interest) {
 		return
 	}
 
-	table.Pib.RemoveEgressEnc(params.Name, params.Egress.Name)
-	core.Log.Info(p, "Removed PIB egress", "name", params.Name, "egress", params.Egress.Name)
+	table.Pet.RemoveEgressEnc(params.Name, params.Egress.Name)
+	core.Log.Info(p, "Removed PET egress", "name", params.Name, "egress", params.Egress.Name)
 
 	p.manager.sendCtrlResp(interest, 200, "OK", &mgmt.ControlArgs{
 		Name:   params.Name,
@@ -123,7 +123,7 @@ func (p *PIBModule) removeEgress(interest *Interest) {
 	})
 }
 
-func (p *PIBModule) addNextHop(interest *Interest) {
+func (p *PETModule) addNextHop(interest *Interest) {
 	if len(interest.Name()) < len(LOCAL_PREFIX)+3 {
 		p.manager.sendCtrlResp(interest, 400, "ControlParameters is incorrect", nil)
 		return
@@ -150,9 +150,9 @@ func (p *PIBModule) addNextHop(interest *Interest) {
 	}
 
 	cost := params.Cost.GetOr(0)
-	table.Pib.AddNextHopEnc(params.Name, faceID, cost)
+	table.Pet.AddNextHopEnc(params.Name, faceID, cost)
 
-	core.Log.Info(p, "Added PIB nexthop", "name", params.Name, "faceid", faceID, "cost", cost)
+	core.Log.Info(p, "Added PET nexthop", "name", params.Name, "faceid", faceID, "cost", cost)
 
 	p.manager.sendCtrlResp(interest, 200, "OK", &mgmt.ControlArgs{
 		Name:   params.Name,
@@ -161,7 +161,7 @@ func (p *PIBModule) addNextHop(interest *Interest) {
 	})
 }
 
-func (p *PIBModule) removeNextHop(interest *Interest) {
+func (p *PETModule) removeNextHop(interest *Interest) {
 	if len(interest.Name()) < len(LOCAL_PREFIX)+3 {
 		p.manager.sendCtrlResp(interest, 400, "ControlParameters is incorrect", nil)
 		return
@@ -182,9 +182,9 @@ func (p *PIBModule) removeNextHop(interest *Interest) {
 	if fid, ok := params.FaceId.Get(); ok && fid != 0 {
 		faceID = fid
 	}
-	table.Pib.RemoveNextHopEnc(params.Name, faceID)
+	table.Pet.RemoveNextHopEnc(params.Name, faceID)
 
-	core.Log.Info(p, "Removed PIB nexthop", "name", params.Name, "faceid", faceID)
+	core.Log.Info(p, "Removed PET nexthop", "name", params.Name, "faceid", faceID)
 
 	p.manager.sendCtrlResp(interest, 200, "OK", &mgmt.ControlArgs{
 		Name:   params.Name,
@@ -192,38 +192,38 @@ func (p *PIBModule) removeNextHop(interest *Interest) {
 	})
 }
 
-func (p *PIBModule) list(interest *Interest) {
+func (p *PETModule) list(interest *Interest) {
 	if len(interest.Name()) > len(LOCAL_PREFIX)+2 {
 		// Ignore because contains version and/or segment components
 		return
 	}
 
-	entries := table.Pib.GetAllEntries()
-	dataset := &mgmt.PibStatus{}
+	entries := table.Pet.GetAllEntries()
+	dataset := &mgmt.PetStatus{}
 	for _, entry := range entries {
-		pibEntry := &mgmt.PibEntry{
+		petEntry := &mgmt.PetEntry{
 			Name:           entry.Name,
 			EgressRecords:  make([]*mgmt.EgressRecord, 0, len(entry.EgressRouters)),
 			NextHopRecords: make([]*mgmt.NextHopRecord, 0, len(entry.NextHops)),
 		}
 
 		for _, egress := range entry.EgressRouters {
-			pibEntry.EgressRecords = append(pibEntry.EgressRecords, &mgmt.EgressRecord{
+			petEntry.EgressRecords = append(petEntry.EgressRecords, &mgmt.EgressRecord{
 				Name: egress,
 			})
 		}
 		for _, nh := range entry.NextHops {
-			pibEntry.NextHopRecords = append(pibEntry.NextHopRecords, &mgmt.NextHopRecord{
+			petEntry.NextHopRecords = append(petEntry.NextHopRecords, &mgmt.NextHopRecord{
 				FaceId: nh.FaceID,
 				Cost:   nh.Cost,
 			})
 		}
 
-		dataset.Entries = append(dataset.Entries, pibEntry)
+		dataset.Entries = append(dataset.Entries, petEntry)
 	}
 
 	name := LOCAL_PREFIX.
-		Append(enc.NewGenericComponent("pib")).
+		Append(enc.NewGenericComponent("pet")).
 		Append(enc.NewGenericComponent("list"))
 	p.manager.sendStatusDataset(interest, name, dataset.Encode())
 }

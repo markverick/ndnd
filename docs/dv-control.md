@@ -22,3 +22,21 @@ The link-destroy command destroys a neighbor link. The face associated with the 
 # Destroy a neighbor link by URI
 ndnd dv link-destroy udp://suns.cs.ucla.edu
 ```
+
+## `ndnd dv prefix-announce`
+
+The `prefix-announce` command injects a local entry directly into the DV prefix egress state.
+
+```bash
+# Announce /example via face 300 with cost 0
+ndnd dv prefix-announce prefix=/example face=300 cost=0
+```
+
+## `ndnd dv prefix-withdraw`
+
+The `prefix-withdraw` command removes a local prefix entry from the DV prefix egress state.
+
+```bash
+# Withdraw /example from face 300
+ndnd dv prefix-withdraw prefix=/example face=300
+```

@@ -13,7 +13,6 @@ import (
 func (dv *Router) postUpdateRib() {
 	dv.updateFib()
 	dv.advert.generate()
-	dv.updatePrefixSubs()
 }
 
 // updateRib computes the RIB chnages for this neighbor
@@ -97,7 +96,7 @@ func (dv *Router) updateFib() {
 	dv.mutex.Lock()
 	defer dv.mutex.Unlock()
 
-	// Name prefixes from global prefix table as well as RIB
+	// Name prefixes from RIB
 	names := make(map[uint64]enc.Name)
 	fibEntries := make(map[uint64][]table.FibEntry)
 
@@ -124,16 +123,9 @@ func (dv *Router) updateFib() {
 		fes := dv.rib.GetFibEntries(dv.neighbors, hash)
 
 		// Add entry for the router's prefix sync group prefix
-		proute := dv.config.PrefixTableGroupPrefix().
+		proute := dv.config.PrefixEgreStatePrefix().
 			Append(router.Name()...)
 		register(proute, fes, 0)
-
-		// Add entries to all prefixes announced by this router
-		for _, prefix := range dv.pfx.GetRouter(router.Name()).Prefixes {
-			// Use the same nexthop entries as the exit router itself
-			// De-duplication is done by the fib table update function
-			register(prefix.Name, fes, prefix.Cost)
-		}
 	}
 
 	// Update all FIB entries to NFD
@@ -144,12 +136,4 @@ func (dv *Router) updateFib() {
 		}
 	}
 	dv.fib.RemoveUnmarked()
-}
-
-// updatePrefixSubs updates the prefix table subscriptions
-func (dv *Router) updatePrefixSubs() {
-	dv.mutex.Lock()
-	defer dv.mutex.Unlock()
-
-	dv.pfx.UpdateFromRib(dv.rib)
 }

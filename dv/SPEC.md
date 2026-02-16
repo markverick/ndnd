@@ -13,7 +13,7 @@ This page describes the protocol specification of NDN Distance Vector Routing (n
    router-specific State Vector Sync group (*Advertisement Sync* group).
 
 1. All routers join a global *Prefix Sync* SVS group to synchronize the
-   global prefix table, which contains the mapping of prefixes to
+   global prefix egress state, which contains the mapping of prefixes to
    routers that can reach them.
 
 ## 2. Format and Naming
@@ -151,7 +151,7 @@ for n in neighbors:
 
 ### Prefix Sync
 
-Each router maintains a global prefix table that maps prefixes to routers that can reach them.
+Each router maintains a global prefix egress state that maps prefixes to routers that can reach them.
 
 1. When any router makes a change to their local prefix list, it increments the
    sequence number for the *Prefix Sync* group, and publishes a `PrefixOpList`
@@ -167,9 +167,9 @@ Each router maintains a global prefix table that maps prefixes to routers that c
 
 ### FIB Computation
 
-The FIB is configured based on the RIB state and the global prefix table.
+The FIB is configured based on the RIB state and the global prefix egress state.
 
-1. For each prefix in the global prefix table, the router selects the lowest-cost
+1. For each prefix in the global prefix egress state, the router selects the lowest-cost
    next-hop interface from the RIB state and installs a FIB entry.
 
 1. If the prefix is not reachable, any existing FIB entry is removed.

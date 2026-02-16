@@ -1,0 +1,317 @@
+package table
+
+import (
+	"slices"
+	"time"
+
+	"github.com/named-data/ndnd/dv/config"
+	"github.com/named-data/ndnd/dv/tlv"
+	enc "github.com/named-data/ndnd/std/encoding"
+	"github.com/named-data/ndnd/std/log"
+	spec "github.com/named-data/ndnd/std/ndn/spec_2022"
+)
+
+type PrefixEgreState struct {
+	config  *config.Config
+	publish func(enc.Wire)
+	routers map[uint64]*PrefixEgreStateRouter
+	me      *PrefixEgreStateRouter
+}
+
+type PrefixEgreStateRouter struct {
+	Name     enc.Name
+	Prefixes map[string]*PrefixEntry
+}
+
+type PrefixEntry struct {
+	Name enc.Name
+	// Default to false
+	Multicast bool
+	// ValidityPeriod from prefix inserter side, optional.
+	ValidityPeriod *spec.ValidityPeriod
+	// Only known for the local router
+	NextHops []PrefixNextHop
+}
+
+type ExpiredPrefix struct {
+	Router enc.Name
+	Name   enc.Name
+}
+
+type PrefixNextHop struct {
+	Face uint64
+	Cost uint64
+}
+
+// NewPrefixEgreState creates the local prefix egress state table.
+func NewPrefixEgreState(config *config.Config, publish func(enc.Wire)) *PrefixEgreState {
+	pt := &PrefixEgreState{
+		config:  config,
+		publish: publish,
+		routers: make(map[uint64]*PrefixEgreStateRouter),
+		me:      nil,
+	}
+	pt.me = pt.GetRouter(config.RouterName())
+	return pt
+}
+
+func (pt *PrefixEgreState) String() string {
+	return "prefix-egress-state"
+}
+
+// GetRouter returns the state for a router, creating it if needed.
+func (pt *PrefixEgreState) GetRouter(name enc.Name) *PrefixEgreStateRouter {
+	hash := name.Hash()
+	router := pt.routers[hash]
+	if router == nil {
+		router = &PrefixEgreStateRouter{
+			Name:     name.Clone(),
+			Prefixes: make(map[string]*PrefixEntry),
+		}
+		pt.routers[hash] = router
+	}
+	return router
+}
+
+func (pt *PrefixEgreState) Reset() {
+	log.Info(pt, "Reset table")
+	clear(pt.me.Prefixes)
+
+	op := tlv.PrefixOpList{
+		EgressRouter:  &tlv.Destination{Name: pt.config.RouterName()},
+		PrefixOpReset: true,
+	}
+	pt.publish(op.Encode())
+}
+
+func (pt *PrefixEgreState) Announce(name enc.Name, face uint64, cost uint64) {
+	pt.AnnounceWithValidity(name, face, cost, nil)
+}
+
+// AnnounceWithValidity updates or creates a local prefix with an optional validity period.
+func (pt *PrefixEgreState) AnnounceWithValidity(name enc.Name, face uint64, cost uint64, validity *spec.ValidityPeriod) {
+	log.Info(pt, "Local announce", "name", name, "face", face, "cost", cost)
+	hash := name.TlvStr()
+
+	// Create nexthop to store
+	nexthop := PrefixNextHop{
+		Face: face,
+		Cost: cost,
+	}
+
+	// Check if matching entry already exists
+	entry := pt.me.Prefixes[hash]
+	publishAdd := false
+	if entry == nil {
+		entry = &PrefixEntry{
+			Name: name,
+		}
+		pt.me.Prefixes[hash] = entry
+		publishAdd = true
+	}
+
+	if !sameValidityPeriod(entry.ValidityPeriod, validity) {
+		if validity == nil {
+			entry.ValidityPeriod = nil
+		} else {
+			entry.ValidityPeriod = &spec.ValidityPeriod{
+				NotBefore: validity.NotBefore,
+				NotAfter:  validity.NotAfter,
+			}
+		}
+		publishAdd = true
+	}
+
+	// Update entry with nexthop cost
+	found := false
+	for i, nh := range entry.NextHops {
+		if nh.Face == face {
+			found = true
+			entry.NextHops[i] = nexthop
+			break
+		}
+	}
+	if !found {
+		entry.NextHops = append(entry.NextHops, nexthop)
+	}
+
+	if publishAdd {
+		pt.publishAdd(hash)
+	}
+}
+
+// Withdraw removes a local next hop and removes the prefix when no next hops remain.
+func (pt *PrefixEgreState) Withdraw(name enc.Name, face uint64) {
+	log.Info(pt, "Local withdraw", "name", name, "face", face)
+	hash := name.TlvStr()
+
+	// Check if entry does not exist
+	entry := pt.me.Prefixes[hash]
+	if entry == nil {
+		return
+	}
+
+	// Remove nexthop from entry
+	for i, nh := range entry.NextHops {
+		if nh.Face == face {
+			entry.NextHops = slices.Delete(entry.NextHops, i, i+1)
+			break
+		}
+	}
+
+	if len(entry.NextHops) < 1 {
+		// remove the entry and publish right away
+		pt.publishRemoveEntry(entry)
+		delete(pt.me.Prefixes, hash)
+	}
+}
+
+// Publishes the update to the network.
+func (pt *PrefixEgreState) publishAdd(hash string) {
+	entry := pt.me.Prefixes[hash]
+	if entry == nil {
+		return // never
+	}
+	log.Info(pt, "Global announce", "name", entry.Name)
+	op := tlv.PrefixOpList{
+		EgressRouter: &tlv.Destination{Name: pt.config.RouterName()},
+		PrefixOpAdds: []*tlv.PrefixOpAdd{{
+			Name:           entry.Name,
+			Multicast:      entry.Multicast,
+			ValidityPeriod: cloneValidityPeriod(entry.ValidityPeriod),
+		}},
+	}
+	pt.publish(op.Encode())
+}
+
+func (pt *PrefixEgreState) publishRemoveEntry(entry *PrefixEntry) {
+	if entry == nil {
+		return // never
+	}
+	log.Info(pt, "Global withdraw", "name", entry.Name)
+	op := tlv.PrefixOpList{
+		EgressRouter:    &tlv.Destination{Name: pt.config.RouterName()},
+		PrefixOpRemoves: []*tlv.PrefixOpRemove{{Name: entry.Name}},
+	}
+	pt.publish(op.Encode())
+}
+
+// Applies ops from a list. Returns if dirty.
+func (pt *PrefixEgreState) Apply(wire enc.Wire) (dirty bool) {
+	ops, err := tlv.ParsePrefixOpList(enc.NewWireView(wire), true)
+	if err != nil {
+		log.Warn(pt, "Failed to parse PrefixOpList", "err", err)
+		return false
+	}
+
+	if ops.EgressRouter == nil || len(ops.EgressRouter.Name) == 0 {
+		log.Error(pt, "Received PrefixOpList has no ExitRouter")
+		return false
+	}
+
+	router := pt.GetRouter(ops.EgressRouter.Name)
+
+	if ops.PrefixOpReset {
+		log.Info(pt, "Reset remote prefixes", "router", ops.EgressRouter.Name)
+		router.Prefixes = make(map[string]*PrefixEntry)
+		dirty = true
+	}
+
+	for _, add := range ops.PrefixOpAdds {
+		log.Info(pt, "Add remote prefix", "router", ops.EgressRouter.Name, "name", add.Name, "multicast", add.Multicast)
+		router.Prefixes[add.Name.TlvStr()] = &PrefixEntry{
+			Name:           add.Name.Clone(),
+			Multicast:      add.Multicast,
+			ValidityPeriod: cloneValidityPeriod(add.ValidityPeriod),
+		}
+		dirty = true
+	}
+
+	for _, remove := range ops.PrefixOpRemoves {
+		log.Info(pt, "Remove remote prefix", "router", ops.EgressRouter.Name, "name", remove.Name)
+		delete(router.Prefixes, remove.Name.TlvStr())
+		dirty = true
+	}
+
+	return dirty
+}
+
+func (pt *PrefixEgreState) Snap() enc.Wire {
+	snap := tlv.PrefixOpList{
+		EgressRouter:  &tlv.Destination{Name: pt.config.RouterName()},
+		PrefixOpReset: true,
+		PrefixOpAdds:  make([]*tlv.PrefixOpAdd, 0, len(pt.me.Prefixes)),
+	}
+
+	for _, entry := range pt.me.Prefixes {
+		snap.PrefixOpAdds = append(snap.PrefixOpAdds, &tlv.PrefixOpAdd{
+			Name:           entry.Name,
+			Multicast:      entry.Multicast,
+			ValidityPeriod: cloneValidityPeriod(entry.ValidityPeriod),
+		})
+	}
+
+	return snap.Encode()
+}
+
+// IsValidAt returns true if the prefix is currently within its validity window.
+func (entry *PrefixEntry) IsValidAt(now time.Time) bool {
+	if entry.ValidityPeriod == nil {
+		return true
+	}
+
+	if entry.ValidityPeriod.NotBefore != "" {
+		if notBefore, err := time.Parse(spec.TimeFmt, entry.ValidityPeriod.NotBefore); err == nil && now.Before(notBefore) {
+			return false
+		}
+	}
+	if entry.ValidityPeriod.NotAfter != "" {
+		if notAfter, err := time.Parse(spec.TimeFmt, entry.ValidityPeriod.NotAfter); err == nil && now.After(notAfter) {
+			return false
+		}
+	}
+	return true
+}
+
+// PruneExpired removes expired prefix entries and returns removed tuples.
+// For local entries, corresponding remove updates are also published.
+func (pt *PrefixEgreState) PruneExpired(now time.Time) (expired []ExpiredPrefix, dirty bool) {
+	expired = make([]ExpiredPrefix, 0)
+
+	for _, router := range pt.routers {
+		for key, entry := range router.Prefixes {
+			if entry.IsValidAt(now) {
+				continue
+			}
+
+			if router == pt.me {
+				pt.publishRemoveEntry(entry)
+			}
+			delete(router.Prefixes, key)
+			expired = append(expired, ExpiredPrefix{
+				Router: router.Name.Clone(),
+				Name:   entry.Name.Clone(),
+			})
+			dirty = true
+		}
+	}
+
+	return expired, dirty
+}
+
+func cloneValidityPeriod(validity *spec.ValidityPeriod) *spec.ValidityPeriod {
+	if validity == nil {
+		return nil
+	}
+	return &spec.ValidityPeriod{
+		NotBefore: validity.NotBefore,
+		NotAfter:  validity.NotAfter,
+	}
+}
+
+func sameValidityPeriod(a, b *spec.ValidityPeriod) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.NotBefore == b.NotBefore && a.NotAfter == b.NotAfter
+}

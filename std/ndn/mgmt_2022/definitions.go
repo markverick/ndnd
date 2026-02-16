@@ -309,7 +309,7 @@ type FibStatus struct {
 	Entries []*FibEntry `tlv:"0x80"`
 }
 
-type PibEntry struct {
+type PetEntry struct {
 	//+field:name
 	Name enc.Name `tlv:"0x07"`
 	//+field:sequence:*EgressRecord:struct:EgressRecord
@@ -318,9 +318,9 @@ type PibEntry struct {
 	NextHopRecords []*NextHopRecord `tlv:"0x81"`
 }
 
-type PibStatus struct {
-	//+field:sequence:*PibEntry:struct:PibEntry
-	Entries []*PibEntry `tlv:"0x80"`
+type PetStatus struct {
+	//+field:sequence:*PetEntry:struct:PetEntry
+	Entries []*PetEntry `tlv:"0x80"`
 }
 
 type StrategyChoice struct {

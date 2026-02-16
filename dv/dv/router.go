@@ -1,7 +1,6 @@
 package dv
 
 import (
-	"os"
 	"sync"
 	"time"
 
@@ -19,7 +18,6 @@ import (
 	"github.com/named-data/ndnd/std/security/trust_schema"
 	"github.com/named-data/ndnd/std/types/optional"
 	"github.com/named-data/ndnd/std/utils"
-	"github.com/named-data/ndnd/pid"
 )
 
 const PrefixSnapThreshold = 50
@@ -33,10 +31,6 @@ type Router struct {
 	trust *sec.TrustConfig
 	// object client
 	client ndn.Client
-	// whether to do prefix insertion
-	enablePrefixInsertion bool
-	// prefix insertion client
-	prefixInsertionClient ndn.Client
 	// nfd management thread
 	nfdc *nfdc.NfdMgmtThread
 	// single mutex for all operations
@@ -52,18 +46,14 @@ type Router struct {
 	// advertisement module
 	advert advertModule
 
-	// prefix table daemon
-	pfx *pid.PrefixDaemon
-
+	// prefix egress state daemon
+	pfx *PrefixModule
 	// neighbor table
 	neighbors *table.NeighborTable
 	// routing information base
 	rib *table.Rib
 	// forwarding table
 	fib *table.Fib
-
-	// map to track seen prefix insertion versions (prefix string -> version)
-	seenPrefixVersions map[string]uint64
 }
 
 // Create a new DV router.
@@ -100,48 +90,14 @@ func NewRouter(config *config.Config, engine ndn.Engine) (*Router, error) {
 		trust.UseDataNameFwHint = true
 	}
 
-	enablePrefixInsertion := config.PrefixInsertionSchemaPath != "deny"
-	var prefixInsertionClient ndn.Client
-	if enablePrefixInsertion {
-		prefixInsertionStore := storage.NewMemoryStore()
-		var prefixInsertionTrust *sec.TrustConfig = nil
-		if config.PrefixInsertionSchemaPath == "insecure" || config.PrefixInsertionKeychainUri == "insecure" {
-			log.Warn(nil, "Prefix insertion module is in allow-all mode")
-		} else {
-			kc, err := keychain.NewKeyChain(config.PrefixInsertionKeychainUri, prefixInsertionStore)
-			if err != nil {
-				return nil, err
-			}
-			schemaData, err := os.ReadFile(config.PrefixInsertionSchemaPath)
-			if err != nil {
-				return nil, err
-			}
-			schema, err := trust_schema.NewLvsSchema(schemaData)
-			if err != nil {
-				return nil, err
-			}
-			anchors := config.PrefixInsertionTrustAnchorNames()
-			prefixInsertionTrust, err = sec.NewTrustConfig(kc, schema, anchors)
-			if err != nil {
-				return nil, err
-			}
-		}
-		prefixInsertionClient = object.NewClient(engine, prefixInsertionStore, prefixInsertionTrust)
-	} else {
-		log.Warn(nil, "Prefix insertion is disabled")
-	}
-
 	// Create the DV router
 	dv := &Router{
-		engine:                engine,
-		config:                config,
-		trust:                 trust,
-		client:                object.NewClient(engine, store, trust),
-		enablePrefixInsertion: enablePrefixInsertion,
-		prefixInsertionClient: prefixInsertionClient,
-		nfdc:                  nfdc.NewNfdMgmtThread(engine),
-		mutex:                 sync.Mutex{},
-		seenPrefixVersions:    make(map[string]uint64),
+		engine: engine,
+		config: config,
+		trust:  trust,
+		client: object.NewClient(engine, store, trust),
+		nfdc:   nfdc.NewNfdMgmtThread(engine),
+		mutex:  sync.Mutex{},
 	}
 
 	// Initialize advertisement module
@@ -152,8 +108,8 @@ func NewRouter(config *config.Config, engine ndn.Engine) (*Router, error) {
 		objDir:   storage.NewMemoryFifoDir(32), // keep last few advertisements
 	}
 
-	// Create prefix table
-	dv.createPrefixTable()
+	// Create prefix egress state daemon.
+	dv.pfx = NewPrefixModule(dv.config, dv.client, dv.nfdc)
 
 	// Create DV tables
 	dv.neighbors = table.NewNeighborTable(config, dv.nfdc)
@@ -212,7 +168,7 @@ func (dv *Router) Start() (err error) {
 	dv.rib.Set(dv.config.RouterName(), dv.config.RouterName(), 0)
 	dv.advert.generate()
 
-	// Initialize prefix table
+	// Initialize prefix egress state
 	dv.pfx.Reset()
 
 	for {
@@ -277,64 +233,80 @@ func (dv *Router) register() (err error) {
 		return err
 	}
 
-	insertPrefix := enc.NewGenericComponent("routing").
-		Append(enc.NewGenericComponent("insert"))
-
-	if dv.enablePrefixInsertion {
-		err = dv.engine.AttachHandler(insertPrefix,
-			func(args ndn.InterestHandlerArgs) {
-				go dv.onInsertion(args)
-			})
-		if err != nil {
-			return err
-		}
+	insertPrefix := dv.pfx.InsertionPrefix()
+	err = dv.engine.AttachHandler(insertPrefix,
+		func(args ndn.InterestHandlerArgs) {
+			go dv.pfx.OnInsertion(args)
+		})
+	if err != nil {
+		return err
 	}
 
 	// Register routes to forwarder
 	pfxs := []enc.Name{
 		dv.config.AdvertisementSyncPrefix(),
 		dv.config.AdvertisementDataPrefix(),
-		// TODO - move this functionality inside of PID
 		dv.pfx.SyncPrefix(),
 		dv.pfx.DataPrefix(),
 		dv.config.MgmtPrefix(),
-	}
-	if dv.enablePrefixInsertion {
-		pfxs = append(pfxs, insertPrefix)
+		insertPrefix,
 	}
 
 	for _, prefix := range pfxs {
 		dv.nfdc.Exec(nfdc.NfdMgmtCmd{
-			Module: "rib",
-			Cmd:    "register",
-			Args: &mgmt.ControlArgs{
-				Name:   prefix,
-				Cost:   optional.Some(uint64(0)),
-				Origin: optional.Some(config.NlsrOrigin),
-			},
-			Retries: -1,
-		})
-	}
-
-	// Set strategy to multicast for sync prefixes
-	pfxs = []enc.Name{
-		dv.config.AdvertisementSyncPrefix(),
-		// TODO - move this functionality inside of PID
-		dv.pfx.SyncPrefix(),
-	}
-	for _, prefix := range pfxs {
-		dv.nfdc.Exec(nfdc.NfdMgmtCmd{
-			Module: "strategy-choice",
-			Cmd:    "set",
+			Module: "pet",
+			Cmd:    "add-nexthop",
 			Args: &mgmt.ControlArgs{
 				Name: prefix,
-				Strategy: &mgmt.Strategy{
-					Name: config.MulticastStrategy,
-				},
 			},
 			Retries: -1,
 		})
 	}
+	// Allow outgoing local-prefix-sync Interests to use two-phase forwarding.
+	// Incoming Interests still terminate locally on the same prefix.
+	dv.nfdc.Exec(nfdc.NfdMgmtCmd{
+		Module: "pet",
+		Cmd:    "add-egress",
+		Args: &mgmt.ControlArgs{
+			Name:   dv.pfx.SyncPrefix(),
+			Egress: &mgmt.EgressRecord{Name: dv.pfx.SyncPrefix()},
+		},
+		Retries: -1,
+	})
+	// Set Advertisement Sync to localhop broadcast
+	dv.nfdc.Exec(nfdc.NfdMgmtCmd{
+		Module: "pet",
+		Cmd:    "add-egress",
+		Args: &mgmt.ControlArgs{
+			Name:   dv.config.AdvertisementSyncPrefix(),
+			Egress: &mgmt.EgressRecord{Name: enc.LOCALHOP.Append(enc.NewGenericComponent("broadcast"))},
+		},
+		Retries: -1,
+	})
+	// Set strategy to multicast for advertisement sync Interests, so
+	// /localhop/.../DV/ADS traffic fan-outs to all neighbor nexthops.
+	dv.nfdc.Exec(nfdc.NfdMgmtCmd{
+		Module: "strategy-choice",
+		Cmd:    "set",
+		Args: &mgmt.ControlArgs{
+			Name: dv.config.AdvertisementSyncPrefix(),
+			Strategy: &mgmt.Strategy{
+				Name: config.MulticastStrategy,
+			},
+		},
+		Retries: -1,
+	})
+	dv.nfdc.Exec(nfdc.NfdMgmtCmd{
+		Module: "strategy-choice",
+		Cmd:    "set",
+		Args: &mgmt.ControlArgs{
+			Name: dv.pfx.SyncPrefix(),
+			Strategy: &mgmt.Strategy{
+				Name: config.MulticastStrategy,
+			},
+		},
+		Retries: -1,
+	})
 
 	return nil
 }
@@ -363,13 +335,13 @@ func (dv *Router) createFaces() {
 		dv.config.Neighbors[i].Created = created
 		dv.mutex.Unlock()
 
+		// Add neighbor to localhop broadcast
 		dv.nfdc.Exec(nfdc.NfdMgmtCmd{
-			Module: "rib",
-			Cmd:    "register",
+			Module: "fib",
+			Cmd:    "add-nexthop",
 			Args: &mgmt.ControlArgs{
-				Name:   dv.config.AdvertisementSyncActivePrefix(),
+				Name:   enc.LOCALHOP.Append(enc.NewGenericComponent("broadcast")),
 				Cost:   optional.Some(uint64(1)),
-				Origin: optional.Some(config.NlsrOrigin),
 				FaceId: optional.Some(faceId),
 			},
 			Retries: 3,
@@ -384,9 +356,8 @@ func (dv *Router) destroyFaces() {
 			continue
 		}
 
-		dv.engine.ExecMgmtCmd("rib", "unregister", &mgmt.ControlArgs{
-			Name:   dv.config.AdvertisementSyncActivePrefix(),
-			Origin: optional.Some(config.NlsrOrigin),
+		dv.engine.ExecMgmtCmd("fib", "remove-nexthop", &mgmt.ControlArgs{
+			Name:   enc.LOCALHOP.Append(enc.NewGenericComponent("broadcast")),
 			FaceId: optional.Some(neighbor.FaceId),
 		})
 
@@ -397,13 +368,4 @@ func (dv *Router) destroyFaces() {
 			})
 		}
 	}
-}
-
-// (AI GENERATED DESCRIPTION): Initializes the router’s prefix table by creating a subscription map, setting up an SVS synchronization agent (with snapshot support) for publishing updates, and constructing a local prefix table that forwards changes to the SVS.
-func (dv *Router) createPrefixTable() {
-	dv.pfx = pid.NewPrefixDaemon(dv.config, dv.client)
-	// TODO - handle cleanup logic for de-allocation (unsubing)
-	dv.pfx.OnChange(func() {
-		dv.updateFib()
-	})
 }

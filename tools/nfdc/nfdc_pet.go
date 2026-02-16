@@ -10,13 +10,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// (AI GENERATED DESCRIPTION): ExecPibList retrieves the PIB status dataset, parses it, and prints each PIB entry with its egress routers and nexthops.
-func (t *Tool) ExecPibList(_ *cobra.Command, _ []string) {
+// ExecPetList retrieves PET status dataset, parses it, and prints PET entries.
+func (t *Tool) ExecPetList(_ *cobra.Command, _ []string) {
 	t.Start()
 	defer t.Stop()
 
 	suffix := enc.Name{
-		enc.NewGenericComponent("pib"),
+		enc.NewGenericComponent("pet"),
 		enc.NewGenericComponent("list"),
 	}
 
@@ -27,14 +27,14 @@ func (t *Tool) ExecPibList(_ *cobra.Command, _ []string) {
 		return
 	}
 
-	status, err := mgmt.ParsePibStatus(enc.NewWireView(data), true)
+	status, err := mgmt.ParsePetStatus(enc.NewWireView(data), true)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing PIB status: %+v\n", err)
+		fmt.Fprintf(os.Stderr, "Error parsing PET status: %+v\n", err)
 		os.Exit(1)
 		return
 	}
 
-	fmt.Println("PIB:")
+	fmt.Println("PET:")
 	for _, entry := range status.Entries {
 		egressList := make([]string, 0, len(entry.EgressRecords))
 		for _, egress := range entry.EgressRecords {

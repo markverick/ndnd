@@ -36,13 +36,13 @@ func (c *Client) WithdrawPrefix(name enc.Name, onError func(error)) {
 	}
 }
 
-// (AI GENERATED DESCRIPTION): Announces a prefix to the network by registering it with the PIB (add‑nexthop), optionally setting its cost, and spacing the request with a short delay to accommodate NFD behavior.
+// (AI GENERATED DESCRIPTION): Announces a prefix to the network by registering it with the PET (add‑nexthop), optionally setting its cost, and spacing the request with a short delay to accommodate NFD behavior.
 func (c *Client) announcePrefix_(args ndn.Announcement) {
 	announceMutex.Lock()
 	time.Sleep(1 * time.Millisecond) // thanks NFD
 	announceMutex.Unlock()
 
-	_, err := c.engine.ExecMgmtCmd("pib", "add-nexthop", &mgmt_2022.ControlArgs{
+	_, err := c.engine.ExecMgmtCmd("pet", "add-nexthop", &mgmt_2022.ControlArgs{
 		Name: args.Name,
 		Cost: optional.Some(uint64(args.Cost)),
 	})
@@ -56,13 +56,13 @@ func (c *Client) announcePrefix_(args ndn.Announcement) {
 	}
 }
 
-// (AI GENERATED DESCRIPTION): Withdraws a previously announced prefix from the local PIB by issuing a “pib remove‑nexthop” command and logs the result.
+// (AI GENERATED DESCRIPTION): Withdraws a previously announced prefix from the local PET by issuing a “pet remove‑nexthop” command and logs the result.
 func (c *Client) withdrawPrefix_(args ndn.Announcement, onError func(error)) {
 	announceMutex.Lock()
 	time.Sleep(1 * time.Millisecond) // thanks NFD
 	announceMutex.Unlock()
 
-	_, err := c.engine.ExecMgmtCmd("pib", "remove-nexthop", &mgmt_2022.ControlArgs{
+	_, err := c.engine.ExecMgmtCmd("pet", "remove-nexthop", &mgmt_2022.ControlArgs{
 		Name: args.Name,
 	})
 	if err != nil {

@@ -61,6 +61,9 @@ type InterestConfig struct {
 
 	// NDNLPv2 parameters
 	NextHopId optional.Optional[uint64]
+	// EgressRouter forces an NDNLPv2 EgressRouter header when expressing Interest.
+	// Leave empty to omit the header.
+	EgressRouter enc.Name
 }
 
 // Container for an encoded Interest packet

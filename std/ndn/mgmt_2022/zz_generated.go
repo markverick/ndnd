@@ -5915,7 +5915,7 @@ func ParseFibStatus(reader enc.WireView, ignoreCritical bool) (*FibStatus, error
 	return context.Parse(reader, ignoreCritical)
 }
 
-type PibEntryEncoder struct {
+type PetEntryEncoder struct {
 	Length uint
 
 	Name_length              uint
@@ -5927,12 +5927,12 @@ type PibEntryEncoder struct {
 	}
 }
 
-type PibEntryParsingContext struct {
+type PetEntryParsingContext struct {
 	EgressRecords_context  EgressRecordParsingContext
 	NextHopRecords_context NextHopRecordParsingContext
 }
 
-func (encoder *PibEntryEncoder) Init(value *PibEntry) {
+func (encoder *PetEntryEncoder) Init(value *PetEntry) {
 	if value.Name != nil {
 		encoder.Name_length = 0
 		for _, c := range value.Name {
@@ -6038,13 +6038,13 @@ func (encoder *PibEntryEncoder) Init(value *PibEntry) {
 
 }
 
-func (context *PibEntryParsingContext) Init() {
+func (context *PetEntryParsingContext) Init() {
 
 	context.EgressRecords_context.Init()
 	context.NextHopRecords_context.Init()
 }
 
-func (encoder *PibEntryEncoder) EncodeInto(value *PibEntry, buf []byte) {
+func (encoder *PetEntryEncoder) EncodeInto(value *PetEntry, buf []byte) {
 
 	pos := uint(0)
 
@@ -6108,7 +6108,7 @@ func (encoder *PibEntryEncoder) EncodeInto(value *PibEntry, buf []byte) {
 	}
 }
 
-func (encoder *PibEntryEncoder) Encode(value *PibEntry) enc.Wire {
+func (encoder *PetEntryEncoder) Encode(value *PetEntry) enc.Wire {
 
 	wire := make(enc.Wire, 1)
 	wire[0] = make([]byte, encoder.Length)
@@ -6118,7 +6118,7 @@ func (encoder *PibEntryEncoder) Encode(value *PibEntry) enc.Wire {
 	return wire
 }
 
-func (context *PibEntryParsingContext) Parse(reader enc.WireView, ignoreCritical bool) (*PibEntry, error) {
+func (context *PetEntryParsingContext) Parse(reader enc.WireView, ignoreCritical bool) (*PetEntry, error) {
 
 	var handled_Name bool = false
 	var handled_EgressRecords bool = false
@@ -6127,7 +6127,7 @@ func (context *PibEntryParsingContext) Parse(reader enc.WireView, ignoreCritical
 	progress := -1
 	_ = progress
 
-	value := &PibEntry{}
+	value := &PetEntry{}
 	var err error
 	var startPos int
 	for {
@@ -6231,44 +6231,44 @@ func (context *PibEntryParsingContext) Parse(reader enc.WireView, ignoreCritical
 	return value, nil
 }
 
-func (value *PibEntry) Encode() enc.Wire {
-	encoder := PibEntryEncoder{}
+func (value *PetEntry) Encode() enc.Wire {
+	encoder := PetEntryEncoder{}
 	encoder.Init(value)
 	return encoder.Encode(value)
 }
 
-func (value *PibEntry) Bytes() []byte {
+func (value *PetEntry) Bytes() []byte {
 	return value.Encode().Join()
 }
 
-func ParsePibEntry(reader enc.WireView, ignoreCritical bool) (*PibEntry, error) {
-	context := PibEntryParsingContext{}
+func ParsePetEntry(reader enc.WireView, ignoreCritical bool) (*PetEntry, error) {
+	context := PetEntryParsingContext{}
 	context.Init()
 	return context.Parse(reader, ignoreCritical)
 }
 
-type PibStatusEncoder struct {
+type PetStatusEncoder struct {
 	Length uint
 
 	Entries_subencoder []struct {
-		Entries_encoder PibEntryEncoder
+		Entries_encoder PetEntryEncoder
 	}
 }
 
-type PibStatusParsingContext struct {
-	Entries_context PibEntryParsingContext
+type PetStatusParsingContext struct {
+	Entries_context PetEntryParsingContext
 }
 
-func (encoder *PibStatusEncoder) Init(value *PibStatus) {
+func (encoder *PetStatusEncoder) Init(value *PetStatus) {
 	{
 		Entries_l := len(value.Entries)
 		encoder.Entries_subencoder = make([]struct {
-			Entries_encoder PibEntryEncoder
+			Entries_encoder PetEntryEncoder
 		}, Entries_l)
 		for i := 0; i < Entries_l; i++ {
 			pseudoEncoder := &encoder.Entries_subencoder[i]
 			pseudoValue := struct {
-				Entries *PibEntry
+				Entries *PetEntry
 			}{
 				Entries: value.Entries[i],
 			}
@@ -6289,7 +6289,7 @@ func (encoder *PibStatusEncoder) Init(value *PibStatus) {
 		for seq_i, seq_v := range value.Entries {
 			pseudoEncoder := &encoder.Entries_subencoder[seq_i]
 			pseudoValue := struct {
-				Entries *PibEntry
+				Entries *PetEntry
 			}{
 				Entries: seq_v,
 			}
@@ -6310,11 +6310,11 @@ func (encoder *PibStatusEncoder) Init(value *PibStatus) {
 
 }
 
-func (context *PibStatusParsingContext) Init() {
+func (context *PetStatusParsingContext) Init() {
 	context.Entries_context.Init()
 }
 
-func (encoder *PibStatusEncoder) EncodeInto(value *PibStatus, buf []byte) {
+func (encoder *PetStatusEncoder) EncodeInto(value *PetStatus, buf []byte) {
 
 	pos := uint(0)
 
@@ -6322,7 +6322,7 @@ func (encoder *PibStatusEncoder) EncodeInto(value *PibStatus, buf []byte) {
 		for seq_i, seq_v := range value.Entries {
 			pseudoEncoder := &encoder.Entries_subencoder[seq_i]
 			pseudoValue := struct {
-				Entries *PibEntry
+				Entries *PetEntry
 			}{
 				Entries: seq_v,
 			}
@@ -6345,7 +6345,7 @@ func (encoder *PibStatusEncoder) EncodeInto(value *PibStatus, buf []byte) {
 	}
 }
 
-func (encoder *PibStatusEncoder) Encode(value *PibStatus) enc.Wire {
+func (encoder *PetStatusEncoder) Encode(value *PetStatus) enc.Wire {
 
 	wire := make(enc.Wire, 1)
 	wire[0] = make([]byte, encoder.Length)
@@ -6355,14 +6355,14 @@ func (encoder *PibStatusEncoder) Encode(value *PibStatus) enc.Wire {
 	return wire
 }
 
-func (context *PibStatusParsingContext) Parse(reader enc.WireView, ignoreCritical bool) (*PibStatus, error) {
+func (context *PetStatusParsingContext) Parse(reader enc.WireView, ignoreCritical bool) (*PetStatus, error) {
 
 	var handled_Entries bool = false
 
 	progress := -1
 	_ = progress
 
-	value := &PibStatus{}
+	value := &PetStatus{}
 	var err error
 	var startPos int
 	for {
@@ -6389,11 +6389,11 @@ func (context *PibStatusParsingContext) Parse(reader enc.WireView, ignoreCritica
 					handled = true
 					handled_Entries = true
 					if value.Entries == nil {
-						value.Entries = make([]*PibEntry, 0)
+						value.Entries = make([]*PetEntry, 0)
 					}
 					{
 						pseudoValue := struct {
-							Entries *PibEntry
+							Entries *PetEntry
 						}{}
 						{
 							value := &pseudoValue
@@ -6433,18 +6433,18 @@ func (context *PibStatusParsingContext) Parse(reader enc.WireView, ignoreCritica
 	return value, nil
 }
 
-func (value *PibStatus) Encode() enc.Wire {
-	encoder := PibStatusEncoder{}
+func (value *PetStatus) Encode() enc.Wire {
+	encoder := PetStatusEncoder{}
 	encoder.Init(value)
 	return encoder.Encode(value)
 }
 
-func (value *PibStatus) Bytes() []byte {
+func (value *PetStatus) Bytes() []byte {
 	return value.Encode().Join()
 }
 
-func ParsePibStatus(reader enc.WireView, ignoreCritical bool) (*PibStatus, error) {
-	context := PibStatusParsingContext{}
+func ParsePetStatus(reader enc.WireView, ignoreCritical bool) (*PetStatus, error) {
+	context := PetStatusParsingContext{}
 	context.Init()
 	return context.Parse(reader, ignoreCritical)
 }

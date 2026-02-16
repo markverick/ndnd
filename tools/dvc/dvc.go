@@ -19,6 +19,34 @@ func Cmds() []*cobra.Command {
 		Args:  cobra.NoArgs,
 		Run:   t.RunDvStatus,
 	}, {
+		Use:   "prefix-announce [params]",
+		Short: "Announce a prefix in the DV prefix egress state",
+		Args:  cobra.ArbitraryArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			t.ExecPrefixCmd(cmd, "announce", args, []string{"cost=0"})
+		},
+	}, {
+		Use:   "prefix-withdraw [params]",
+		Short: "Withdraw a prefix from the DV prefix egress state",
+		Args:  cobra.ArbitraryArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			t.ExecPrefixCmd(cmd, "withdraw", args, []string{})
+		},
+	}, {
+		Use:   "pet-add-nexthop [params]",
+		Short: "Add a nexthop to the PID PET",
+		Args:  cobra.ArbitraryArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			t.ExecPetCmd(cmd, "register", args, []string{"cost=0"})
+		},
+	}, {
+		Use:   "pet-remove-nexthop [params]",
+		Short: "Remove a nexthop from the PID PET",
+		Args:  cobra.ArbitraryArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			t.ExecPetCmd(cmd, "unregister", args, []string{})
+		},
+	}, {
 		Use:   "link-create NEIGHBOR-URI",
 		Short: "Create a new active neighbor link",
 		Args:  cobra.ExactArgs(1),

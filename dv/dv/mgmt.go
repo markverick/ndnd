@@ -3,6 +3,7 @@ package dv
 import (
 	"time"
 
+	"github.com/named-data/ndnd/dv/config"
 	"github.com/named-data/ndnd/dv/tlv"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/log"
@@ -29,6 +30,8 @@ func (dv *Router) mgmtOnInterest(args ndn.InterestHandlerArgs) {
 		dv.mgmtOnStatus(args)
 	case "rib":
 		dv.mgmtOnRib(args)
+	case "prefix":
+		dv.mgmtOnPrefix(args)
 	default:
 		log.Warn(dv, "Unknown management command", "name", name)
 	}
@@ -91,8 +94,8 @@ func (dv *Router) mgmtOnRib(args ndn.InterestHandlerArgs) {
 		args.Reply(data.Wire)
 	}()
 
-	// /localhost/nlsr/rib/register/h%0C%07%07%08%05cathyo%01A/params-sha256=a971bb4753691b756cb58239e2585362a154ec6551985133990c8bd2401c466a
-	// /localhost/nlsr/rib/unregister/h%0C%07%07%08%05cathyo%01A/params-sha256=026dd595c75032c5101b321fbc11eeb96277661c66bc0564ac7ea1a281ae8210
+	// /localhost/dv/rib/register/h%0C%07%07%08%05cathyo%01A/params-sha256=...
+	// /localhost/dv/rib/unregister/h%0C%07%07%08%05cathyo%01A/params-sha256=...
 	iname := args.Interest.Name()
 	if len(iname) != 6 {
 		log.Warn(dv, "Invalid readvertise Interest", "name", iname)
@@ -135,5 +138,83 @@ func (dv *Router) mgmtOnRib(args ndn.InterestHandlerArgs) {
 		Name:   params.Val.Name,
 		FaceId: optional.Some(uint64(1)), // NFD compatibility
 		Origin: optional.Some(uint64(65)),
+	}
+}
+
+// Received prefix egress state Interest
+func (dv *Router) mgmtOnPrefix(args ndn.InterestHandlerArgs) {
+	res := &mgmt.ControlResponse{
+		Val: &mgmt.ControlResponseVal{
+			StatusCode: 400,
+			StatusText: "Failed to execute command",
+			Params:     nil,
+		},
+	}
+
+	defer func() {
+		signer := sig.NewSha256Signer()
+		data, err := dv.engine.Spec().MakeData(
+			args.Interest.Name(),
+			&ndn.DataConfig{
+				ContentType: optional.Some(ndn.ContentTypeBlob),
+				Freshness:   optional.Some(1 * time.Second),
+			},
+			res.Encode(),
+			signer)
+		if err != nil {
+			log.Warn(dv, "Failed to make prefix response Data", "err", err)
+			return
+		}
+		args.Reply(data.Wire)
+	}()
+
+	// /localhost/dv/prefix/announce/h%0C%07%07%08%05cathyo%01A/params-sha256=...
+	// /localhost/dv/prefix/withdraw/h%0C%07%07%08%05cathyo%01A/params-sha256=...
+	iname := args.Interest.Name()
+	if len(iname) != 6 {
+		log.Warn(dv, "Invalid prefix Interest", "name", iname)
+		return
+	}
+
+	module, cmd, argC := iname[2], iname[3], iname[4]
+	if module.String() != "prefix" {
+		log.Warn(dv, "Unknown prefix module", "name", iname)
+		return
+	}
+
+	params, err := mgmt.ParseControlParameters(enc.NewBufferView(argC.Val), false)
+	if err != nil || params.Val == nil || params.Val.Name == nil {
+		log.Warn(dv, "Failed to parse prefix args", "err", err)
+		return
+	}
+
+	name := params.Val.Name
+	face := params.Val.FaceId.GetOr(0)
+	cost := params.Val.Cost.GetOr(0)
+	if cost > config.CostInfinity {
+		log.Warn(dv, "Invalid prefix cost", "cost", cost)
+		return
+	}
+
+	log.Debug(dv, "Received prefix request", "cmd", cmd, "name", name, "face", face, "cost", cost)
+	dv.mutex.Lock()
+	defer dv.mutex.Unlock()
+
+	switch cmd.String() {
+	case "announce":
+		dv.pfx.Announce(name, face, cost)
+	case "withdraw":
+		dv.pfx.Withdraw(name, face)
+	default:
+		log.Warn(dv, "Unknown prefix cmd", "cmd", cmd)
+		return
+	}
+
+	res.Val.StatusCode = 200
+	res.Val.StatusText = "Prefix egress state command successful"
+	res.Val.Params = &mgmt.ControlArgs{
+		Name:   params.Val.Name,
+		FaceId: optional.Some(face),
+		Cost:   optional.Some(cost),
 	}
 }

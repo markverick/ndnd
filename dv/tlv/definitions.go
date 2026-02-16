@@ -37,7 +37,7 @@ type Destination struct {
 
 type PrefixOpList struct {
 	//+field:struct:Destination
-	ExitRouter *Destination `tlv:"0xCC"`
+	EgressRouter *Destination `tlv:"0xCC"`
 	//+field:bool
 	PrefixOpReset bool `tlv:"0x12E"`
 	//+field:sequence:*PrefixOpAdd:struct:PrefixOpAdd
@@ -49,8 +49,10 @@ type PrefixOpList struct {
 type PrefixOpAdd struct {
 	//+field:name
 	Name enc.Name `tlv:"0x07"`
-	//+field:natural
-	Cost uint64 `tlv:"0xD0"`
+	//+field:bool
+	Multicast bool `tlv:"0xD0"`
+	//+field:struct:spec_2022.ValidityPeriod
+	ValidityPeriod *spec_2022.ValidityPeriod `tlv:"0xFD"`
 }
 
 type PrefixOpRemove struct {
@@ -81,8 +83,6 @@ type PrefixInsertion struct {
 }
 
 type PrefixInsertionInnerContent struct {
-	//+field:natural
-	ExpirationPeriod uint64 `tlv:"0x6d"`
 	//+field:struct:spec_2022.ValidityPeriod
 	ValidityPeriod *spec_2022.ValidityPeriod `tlv:"0xfd"`
 	//+field:natural:optional

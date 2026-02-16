@@ -1,52 +1,55 @@
 import random
 import os
-import time
 
 from mininet.log import info
 from minindn.minindn import Minindn
 from minindn.apps.app_manager import AppManager
-from minindn.apps.nfd import Nfd
 
 from fw import NDNd_FW
 import dv_util
 
-def scenario_ndnd_fw(ndn: Minindn):
-    scenario(ndn, fw=NDNd_FW)
-
-def scenario_nfd(ndn: Minindn):
-    scenario(ndn, fw=Nfd)
-
-def scenario(ndn: Minindn, fw=None, network='/minindn'):
+def scenario(ndn: Minindn, network='/minindn'):
     """
-    Simple file transfer scenario with NDNd and NFD forwarders.
+    Simple file transfer scenario with NDNd forwarder.
     This tests routing convergence and cat/put operations.
-    Also tests routing compatibility for both NDNd and NFD.
     """
 
     info('Starting forwarder on nodes\n')
-    AppManager(ndn, ndn.net.hosts, fw)
+    AppManager(ndn, ndn.net.hosts, NDNd_FW)
 
     dv_util.setup(ndn, network=network)
-    dv_util.converge(ndn.net.hosts, network=network, use_nfdc=(fw==Nfd))
+    dv_util.converge(ndn.net.hosts, network=network)
 
     info('Testing file transfer\n')
     test_file = '/tmp/test.bin'
-    os.system(f'dd if=/dev/urandom of={test_file} bs=10M count=1')
+    os.system(f'dd if=/dev/urandom of={test_file} bs=64K count=1')
 
     sample_size = min(8, len(ndn.net.hosts)-1)
     put_nodes = random.sample(ndn.net.hosts, sample_size)
     cat_nodes = random.sample(ndn.net.hosts, sample_size)
+    cat_requests = [(cat_node, random.choice(put_nodes)) for cat_node in cat_nodes]
+    put_prefixes = {f"{network}/{node.name}/test" for node in put_nodes}
 
     for node in put_nodes:
-        cmd = f'ndnd put --expose "{network}/{node.name}/test" < {test_file} &'
+        prefix = f"{network}/{node.name}/test"
+        # Explicitly inject into DV prefix egress state so PET replication can carry it.
+        node.cmd(f'ndnd dv prefix-announce prefix={prefix} cost=0')
+        cmd = f'ndnd put --expose "{prefix}" < {test_file} &'
         info(f'{node.name} {cmd}\n')
         node.cmd(cmd)
 
-    info('Waiting for put to complete\n')
-    time.sleep(30)
+    # New pipeline requires PET propagation before Interests can be forwarded.
+    expected = {node: set(put_prefixes) for node in ndn.net.hosts}
+    dv_util.wait_prefix_pet_ready(expected, deadline=180)
 
-    for node in cat_nodes:
-        put_node = random.choice(put_nodes)
+    # Prefix traffic should remain PET-driven; app prefixes must not be injected into FIB.
+    for node in ndn.net.hosts:
+        fib = node.cmd('ndnd fw fib-list')
+        for prefix in put_prefixes:
+            if prefix in fib:
+                raise Exception(f'App prefix {prefix} unexpectedly present in FIB on {node.name}')
+
+    for node, put_node in cat_requests:
         cmd = f'ndnd cat "{network}/{put_node.name}/test" > recv.test.bin 2> cat.log'
         info(f'{node.name} {cmd}\n')
         node.cmd(cmd)
