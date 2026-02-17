@@ -1,4 +1,6 @@
 import random
+import os
+import time
 
 from mininet.log import info
 from minindn.minindn import Minindn
@@ -22,9 +24,7 @@ def scenario(ndn: Minindn):
     # Disconnect the node from the network
     info(f'Disconnecting {lazy_node.name}\n')
     downIntf = lazy_node.intfList()[0]
-    # Use tc directly to avoid noisy Mininet "(99.99% loss)" log output while
-    # preserving the test's intended near-total partition behavior.
-    lazy_node.cmd(f'tc qdisc replace dev {downIntf.name} root netem loss 99.99%')
+    downIntf.config(loss=99.99)
 
     info('Starting forwarder on nodes\n')
     AppManager(ndn, ndn.net.hosts, NDNd_FW)
@@ -40,7 +40,7 @@ def scenario(ndn: Minindn):
 
     # Reconnect the node to the network
     info(f'Reconnecting {lazy_node.name}\n')
-    lazy_node.cmd(f'tc qdisc del dev {downIntf.name} root')
+    downIntf.config(loss=0.0001)
 
     # Wait for convergence
     dv_util.converge(ndn.net.hosts)
