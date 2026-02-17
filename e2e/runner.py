@@ -20,7 +20,7 @@ def run(scenario: FunctionType, **kwargs) -> None:
         scenario(ndn, **kwargs)
         info(f'Scenario completed in: {time.time()-start:.2f}s\n')
         info(f"===================================================\n\n")
-        MiniNDNCLI(ndn.net)
+        # MiniNDNCLI(ndn.net)
 
         # Call all cleanups without stopping the network
         # This ensures we don't recreate the network for each test
@@ -44,6 +44,6 @@ if __name__ == '__main__':
     ndn.start()
 
     run(test_001.scenario)
-    # run(test_002.scenario)
+    run(test_002.scenario)
 
     ndn.stop()
