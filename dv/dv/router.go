@@ -269,7 +269,7 @@ func (dv *Router) register() (err error) {
 		Cmd:    "add-egress",
 		Args: &mgmt.ControlArgs{
 			Name:   dv.pfx.SyncPrefix(),
-			Egress: &mgmt.EgressRecord{Name: dv.pfx.SyncPrefix()},
+			Egress: &mgmt.EgressRecord{Name: enc.LOCALHOP.Append(enc.NewGenericComponent("broadcast"))},
 		},
 		Retries: -1,
 	})

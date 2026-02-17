@@ -122,10 +122,8 @@ func (dv *Router) updateFib() {
 		// Get FIB entry to reach this router
 		fes := dv.rib.GetFibEntries(dv.neighbors, hash)
 
-		// Add entry for the router's prefix sync group prefix
-		proute := dv.config.PrefixEgreStatePrefix().
-			Append(router.Name()...)
-		register(proute, fes, 0)
+		// Keep FIB keyed by real router names; control names are mapped in PET.
+		register(router.Name(), fes, 0)
 	}
 
 	// Update all FIB entries to NFD

@@ -34,6 +34,8 @@ type Config struct {
 	Router string `json:"router"`
 	// Period of sending Advertisement Sync Interests.
 	AdvertisementSyncInterval_ms uint64 `json:"advertise_interval"`
+	// Period of sending Prefix Sync Interests.
+	PrefixSyncInterval_ms uint64 `json:"prefix_sync_interval"`
 	// Time after which a neighbor is considered dead.
 	RouterDeadInterval_ms uint64 `json:"router_dead_interval"`
 	// URI specifying KeyChain location.
@@ -91,11 +93,13 @@ func DefaultConfig() *Config {
 		Network:                      "", // invalid
 		Router:                       "", // invalid
 		AdvertisementSyncInterval_ms: 5000,
-		RouterDeadInterval_ms:        30000,
-		KeyChainUri:                  "undefined",
-		PrefixInsertionSchemaPath:    "deny",
-		PrefixInsertionKeychainUri:   "undefined",
-		PrefixEgreStateReplicate:     true,
+		// Follow advertise_interval unless configured explicitly.
+		PrefixSyncInterval_ms:      0,
+		RouterDeadInterval_ms:      30000,
+		KeyChainUri:                "undefined",
+		PrefixInsertionSchemaPath:  "deny",
+		PrefixInsertionKeychainUri: "undefined",
+		PrefixEgreStateReplicate:   true,
 	}
 }
 
@@ -135,6 +139,12 @@ func (c *Config) Parse() (err error) {
 	// Validate intervals are not too short
 	if c.AdvertisementSyncInterval() < 1*time.Second {
 		return fmt.Errorf("AdvertisementSyncInterval must be at least 1 second")
+	}
+	if c.PrefixSyncInterval_ms == 0 {
+		c.PrefixSyncInterval_ms = c.AdvertisementSyncInterval_ms
+	}
+	if c.PrefixSyncInterval() < 1*time.Second {
+		return fmt.Errorf("PrefixSyncInterval must be at least 1 second")
 	}
 
 	// Dead interval at least 2 sync intervals
@@ -178,7 +188,7 @@ func (c *Config) Parse() (err error) {
 	// Prefix sync prefix
 	c.pfxSyncGroupPfxN = c.networkNameN.
 		Append(enc.NewKeywordComponent("DV")).
-		Append(enc.NewKeywordComponent("PFS"))
+		Append(enc.NewKeywordComponent("PES"))
 
 	// Local prefixes to NFD
 	c.mgmtPrefix = enc.LOCALHOST.
@@ -234,6 +244,11 @@ func (c *Config) MgmtPrefix() enc.Name {
 // (AI GENERATED DESCRIPTION): Returns the advertisement synchronization interval from the configuration, converting the stored millisecond value into a `time.Duration`.
 func (c *Config) AdvertisementSyncInterval() time.Duration {
 	return time.Duration(c.AdvertisementSyncInterval_ms) * time.Millisecond
+}
+
+// (AI GENERATED DESCRIPTION): Returns the prefix synchronization interval from the configuration, converting the stored millisecond value into a `time.Duration`.
+func (c *Config) PrefixSyncInterval() time.Duration {
+	return time.Duration(c.PrefixSyncInterval_ms) * time.Millisecond
 }
 
 // (AI GENERATED DESCRIPTION): Returns the router dead interval configured in milliseconds, converting the `RouterDeadInterval_ms` field to a `time.Duration`.

@@ -6,6 +6,7 @@ from types import FunctionType
 
 from mininet.log import setLogLevel, info
 from minindn.minindn import Minindn
+from minindn.util import MiniNDNCLI
 
 import test_001
 import test_002
@@ -19,6 +20,7 @@ def run(scenario: FunctionType, **kwargs) -> None:
         scenario(ndn, **kwargs)
         info(f'Scenario completed in: {time.time()-start:.2f}s\n')
         info(f"===================================================\n\n")
+        MiniNDNCLI(ndn.net)
 
         # Call all cleanups without stopping the network
         # This ensures we don't recreate the network for each test
@@ -42,6 +44,6 @@ if __name__ == '__main__':
     ndn.start()
 
     run(test_001.scenario)
-    run(test_002.scenario)
+    # run(test_002.scenario)
 
     ndn.stop()

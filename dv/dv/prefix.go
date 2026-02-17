@@ -53,8 +53,9 @@ func NewPrefixModule(config *config.Config, objectClient ndn.Client, nfdcThread 
 	pfxSvs, err := ndn_sync.NewSvsALO(ndn_sync.SvsAloOpts{
 		Name: config.RouterName(),
 		Svs: ndn_sync.SvSyncOpts{
-			Client:      objectClient,
-			GroupPrefix: config.PrefixEgreStatePrefix(),
+			Client:          objectClient,
+			GroupPrefix:     config.PrefixEgreStatePrefix(),
+			PeriodicTimeout: config.PrefixSyncInterval(),
 		},
 		Snapshot: &ndn_sync.SnapshotNodeLatest{
 			Client: objectClient,
@@ -138,7 +139,7 @@ func (pfx *PrefixModule) onPublisher(name enc.Name) {
 				Cmd:    "add-egress",
 				Args: &mgmt.ControlArgs{
 					Name:   route,
-					Egress: &mgmt.EgressRecord{Name: route},
+					Egress: &mgmt.EgressRecord{Name: name.Clone()},
 				},
 				Retries: -1,
 			})
@@ -283,7 +284,7 @@ func (pfx *PrefixModule) resetRouterPet(router enc.Name) []petEgressOp {
 		return nil
 	}
 
-	egress := pfx.pfxGroup.Append(router...)
+	egress := router.Clone()
 	ops := make([]petEgressOp, 0, len(prefixes))
 	for _, name := range prefixes {
 		ops = append(ops, petEgressOp{
@@ -310,7 +311,7 @@ func (pfx *PrefixModule) addRouterPrefixPet(router enc.Name, prefix enc.Name) []
 	}
 	prefixes[key] = prefix.Clone()
 
-	egress := pfx.pfxGroup.Append(router...)
+	egress := router.Clone()
 	return []petEgressOp{{
 		add:    true,
 		name:   prefix.Clone(),
@@ -334,7 +335,7 @@ func (pfx *PrefixModule) removeRouterPrefixPet(router enc.Name, prefix enc.Name)
 		delete(pfx.petPrefixes, routerHash)
 	}
 
-	egress := pfx.pfxGroup.Append(router...)
+	egress := router.Clone()
 	return []petEgressOp{{
 		add:    false,
 		name:   prefix.Clone(),

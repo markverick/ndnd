@@ -9,7 +9,7 @@
 #advertisement_data: /"localhop"/#router/"32=DV"/"32=ADV"/_ <= #router_cert
 
 // Prefix egress state sync group
-#prefix_egre_state: #network/"32=DV"/"32=PFS"
+#prefix_egre_state: #network/"32=DV"/"32=PES"
 // Prefix egress state data
 #prefix_egre_state_data: #prefix_egre_state/#router/_/_ <= #router_cert
 
