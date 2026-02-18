@@ -3,9 +3,13 @@ package dvc
 import (
 	"fmt"
 	"os"
+	"time"
 
+	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/engine"
 	"github.com/named-data/ndnd/std/ndn"
+	"github.com/named-data/ndnd/std/types/optional"
+	"github.com/named-data/ndnd/std/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -20,10 +24,10 @@ func Cmds() []*cobra.Command {
 		Run:   t.RunDvStatus,
 	}, {
 		Use:   "prefix-announce [params]",
-		Short: "Announce a prefix in the DV prefix egress state",
+		Short: "Announce a prefix in the DV prefix egress state (expires defaults to 1h)",
 		Args:  cobra.ArbitraryArgs,
 		Run: func(cmd *cobra.Command, args []string) {
-			t.ExecPrefixCmd(cmd, "announce", args, []string{"cost=0"})
+			t.ExecPrefixCmd(cmd, "announce", args, []string{"expires=3600000"})
 		},
 	}, {
 		Use:   "prefix-withdraw [params]",
@@ -33,18 +37,48 @@ func Cmds() []*cobra.Command {
 			t.ExecPrefixCmd(cmd, "withdraw", args, []string{})
 		},
 	}, {
-		Use:   "pet-add-nexthop [params]",
-		Short: "Add a nexthop to the PID PET",
-		Args:  cobra.ArbitraryArgs,
-		Run: func(cmd *cobra.Command, args []string) {
-			t.ExecPetCmd(cmd, "register", args, []string{"cost=0"})
-		},
-	}, {
-		Use:   "pet-remove-nexthop [params]",
-		Short: "Remove a nexthop from the PID PET",
-		Args:  cobra.ArbitraryArgs,
-		Run: func(cmd *cobra.Command, args []string) {
-			t.ExecPetCmd(cmd, "unregister", args, []string{})
+		Use:   "prefix-list",
+		Short: "List prefix egress state entries",
+		Args:  cobra.NoArgs,
+		Run: func(_ *cobra.Command, _ []string) {
+			t.Start()
+			defer t.Stop()
+
+			name := enc.Name{
+				enc.LOCALHOST,
+				enc.NewGenericComponent("dv"),
+				enc.NewGenericComponent("prefix"),
+				enc.NewGenericComponent("list"),
+			}
+			cfg := &ndn.InterestConfig{
+				MustBeFresh: true,
+				Lifetime:    optional.Some(time.Second),
+				Nonce:       utils.ConvertNonce(t.engine.Timer().Nonce()),
+			}
+
+			interest, err := t.engine.Spec().MakeInterest(name, cfg, nil, nil)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to create prefix-list Interest: %+v\n", err)
+				os.Exit(1)
+				return
+			}
+
+			ch := make(chan ndn.ExpressCallbackArgs, 1)
+			err = t.engine.Express(interest, func(args ndn.ExpressCallbackArgs) { ch <- args })
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to express prefix-list Interest: %+v\n", err)
+				os.Exit(1)
+				return
+			}
+			eargs := <-ch
+
+			if eargs.Result != ndn.InterestResultData {
+				fmt.Fprintf(os.Stderr, "prefix-list Interest failed: %s\n", eargs.Result)
+				os.Exit(1)
+				return
+			}
+
+			fmt.Print(string(eargs.Data.Content().Join()))
 		},
 	}, {
 		Use:   "link-create NEIGHBOR-URI",

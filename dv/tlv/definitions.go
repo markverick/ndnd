@@ -73,6 +73,8 @@ type Status struct {
 	NNeighbors uint64 `tlv:"0x199"`
 	//+field:natural
 	NFibEntries uint64 `tlv:"0x19B"`
+	//+field:natural
+	NPesEntries uint64 `tlv:"0x19D"`
 }
 
 type PrefixInsertion struct {

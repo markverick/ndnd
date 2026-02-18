@@ -26,17 +26,33 @@ ndnd dv link-destroy udp://suns.cs.ucla.edu
 ## `ndnd dv prefix-announce`
 
 The `prefix-announce` command injects a local entry directly into the DV prefix egress state.
+`expires=<milliseconds>` is optional and defines the validity period duration.
+If omitted, the CLI sends `expires=3600000` (1 hour) in the management Interest.
+`face` and `cost` are not carried in `prefix-announce` params.
 
 ```bash
-# Announce /example via face 300 with cost 0
-ndnd dv prefix-announce prefix=/example face=300 cost=0
+# Announce /example for 60 seconds
+ndnd dv prefix-announce prefix=/example expires=60000
+
+# Announce /example with default 1 hour validity
+ndnd dv prefix-announce prefix=/example
 ```
 
 ## `ndnd dv prefix-withdraw`
 
 The `prefix-withdraw` command removes a local prefix entry from the DV prefix egress state.
+`face` and `cost` are not part of `prefix-withdraw` params.
 
 ```bash
-# Withdraw /example from face 300
-ndnd dv prefix-withdraw prefix=/example face=300
+# Withdraw /example
+ndnd dv prefix-withdraw prefix=/example
+```
+
+## `ndnd dv prefix-list`
+
+The `prefix-list` command prints the local view of the DV prefix egress state (PES), including any validity window and remaining time before expiration.
+
+```bash
+# Show prefix list
+ndnd dv prefix-list
 ```

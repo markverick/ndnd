@@ -191,19 +191,11 @@ func (pfx *PrefixModule) Reset() {
 }
 
 // Announce adds or updates a local prefix in prefix egress state.
-func (pfx *PrefixModule) Announce(name enc.Name, face uint64, cost uint64) {
+// Use face=0 and cost=0 for route-only semantics.
+func (pfx *PrefixModule) Announce(name enc.Name, face uint64, cost uint64, validity *spec.ValidityPeriod) {
 	pfx.mu.Lock()
 	petOps := pfx.addRouterPrefixPet(pfx.routerName, name)
-	pfx.pfx.Announce(name, face, cost)
-	pfx.mu.Unlock()
-
-	pfx.applyPetOps(petOps)
-}
-
-func (pfx *PrefixModule) AnnounceWithValidity(name enc.Name, face uint64, cost uint64, validity *spec.ValidityPeriod) {
-	pfx.mu.Lock()
-	petOps := pfx.addRouterPrefixPet(pfx.routerName, name)
-	pfx.pfx.AnnounceWithValidity(name, face, cost, validity)
+	pfx.pfx.Announce(name, face, cost, validity)
 	pfx.mu.Unlock()
 
 	pfx.applyPetOps(petOps)
@@ -217,6 +209,15 @@ func (pfx *PrefixModule) Withdraw(name enc.Name, face uint64) {
 	if _, ok := pfx.pfx.GetRouter(pfx.routerName).Prefixes[name.TlvStr()]; !ok {
 		petOps = append(petOps, pfx.removeRouterPrefixPet(pfx.routerName, name)...)
 	}
+	pfx.mu.Unlock()
+
+	pfx.applyPetOps(petOps)
+}
+
+func (pfx *PrefixModule) WithdrawRoute(name enc.Name) {
+	pfx.mu.Lock()
+	petOps := pfx.removeRouterPrefixPet(pfx.routerName, name)
+	pfx.pfx.Withdraw(name, 0)
 	pfx.mu.Unlock()
 
 	pfx.applyPetOps(petOps)
@@ -238,6 +239,20 @@ func (pfx *PrefixModule) Snap() enc.Wire {
 	defer pfx.mu.Unlock()
 
 	return pfx.pfx.Snap()
+}
+
+func (pfx *PrefixModule) SnapshotEntries() []table.PrefixSnapshotEntry {
+	pfx.mu.Lock()
+	defer pfx.mu.Unlock()
+
+	return pfx.pfx.SnapshotEntries()
+}
+
+func (pfx *PrefixModule) EntryCount() int {
+	pfx.mu.Lock()
+	defer pfx.mu.Unlock()
+
+	return pfx.pfx.EntryCount()
 }
 
 // information for svs group, need to expose for now to register with mgmt

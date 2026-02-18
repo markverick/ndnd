@@ -15,40 +15,7 @@ import (
 	sig "github.com/named-data/ndnd/std/security/signer"
 	"github.com/named-data/ndnd/std/types/optional"
 	"github.com/named-data/ndnd/std/utils"
-	"github.com/spf13/cobra"
 )
-
-// (AI GENERATED DESCRIPTION): Executes a PID PET management command by parsing key=value args into ControlArgs, issuing a signed Interest to the DV management endpoint, and printing the resulting control response.
-func (t *Tool) ExecPetCmd(_ *cobra.Command, cmd string, args []string, defaults []string) {
-	t.Start()
-	defer t.Stop()
-
-	ctrlArgs := mgmt.ControlArgs{}
-
-	for _, arg := range append(defaults, args...) {
-		kv := strings.SplitN(arg, "=", 2)
-		if len(kv) != 2 {
-			fmt.Fprintf(os.Stderr, "Invalid argument: %s (should be key=value)\n", arg)
-			os.Exit(9)
-			return
-		}
-
-		key, val := t.preprocessPetArg(kv[0], kv[1])
-		t.convPetArg(&ctrlArgs, key, val)
-	}
-
-	res, err := t.execDvMgmtCmd("rib", cmd, &ctrlArgs)
-	if res == nil {
-		fmt.Fprintf(os.Stderr, "Error executing command: %+v\n", err)
-		os.Exit(1)
-		return
-	}
-
-	t.printCtrlResponse(res)
-	if err != nil {
-		os.Exit(1)
-	}
-}
 
 func (t *Tool) preprocessPetArg(key string, val string) (string, string) {
 	if key != "face" || !strings.Contains(val, "://") {
@@ -146,6 +113,8 @@ func (t *Tool) convPetArg(ctrlArgs *mgmt.ControlArgs, key string, val string) {
 		ctrlArgs.FaceId = optional.Some(parseUint(val))
 	case "cost":
 		ctrlArgs.Cost = optional.Some(parseUint(val))
+	case "expires":
+		ctrlArgs.ExpirationPeriod = optional.Some(parseUint(val))
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command argument key: %s\n", key)
 		os.Exit(9)

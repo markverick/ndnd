@@ -123,9 +123,11 @@ func (n *petNode) fillTreeToPrefixEnc(name enc.Name) *petNode {
 }
 
 func (n *petNode) pruneIfEmpty() {
-	for entry := n; entry.parent != nil && entry.entry == nil && len(entry.children) == 0; entry = entry.parent {
-		delete(entry.parent.children, entry.component.Hash())
+	for entry := n; entry != nil && entry.parent != nil && entry.entry == nil && len(entry.children) == 0; {
+		parent := entry.parent
+		delete(parent.children, entry.component.Hash())
 		entry.parent = nil
+		entry = parent
 	}
 }
 

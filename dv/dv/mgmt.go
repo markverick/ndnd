@@ -1,20 +1,24 @@
 package dv
 
 import (
+	"fmt"
+	"slices"
+	"strings"
 	"time"
 
-	"github.com/named-data/ndnd/dv/config"
+	"github.com/named-data/ndnd/dv/table"
 	"github.com/named-data/ndnd/dv/tlv"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/log"
 	"github.com/named-data/ndnd/std/ndn"
 	mgmt "github.com/named-data/ndnd/std/ndn/mgmt_2022"
+	spec "github.com/named-data/ndnd/std/ndn/spec_2022"
 	sig "github.com/named-data/ndnd/std/security/signer"
 	"github.com/named-data/ndnd/std/types/optional"
 	"github.com/named-data/ndnd/std/utils"
 )
 
-// (AI GENERATED DESCRIPTION): Handles incoming management Interest packets by validating the prefix and routing them to the status or RIB handlers based on the command component.
+// (AI GENERATED DESCRIPTION): Handles incoming management Interest packets by validating the prefix and routing them to the status or prefix handlers based on the command component.
 func (dv *Router) mgmtOnInterest(args ndn.InterestHandlerArgs) {
 	pfxLen := len(dv.config.MgmtPrefix())
 	name := args.Interest.Name()
@@ -28,8 +32,6 @@ func (dv *Router) mgmtOnInterest(args ndn.InterestHandlerArgs) {
 	switch name[pfxLen].String() {
 	case "status":
 		dv.mgmtOnStatus(args)
-	case "rib":
-		dv.mgmtOnRib(args)
 	case "prefix":
 		dv.mgmtOnPrefix(args)
 	default:
@@ -49,6 +51,7 @@ func (dv *Router) mgmtOnStatus(args ndn.InterestHandlerArgs) {
 			NRibEntries: uint64(dv.rib.Size()),
 			NNeighbors:  uint64(dv.neighbors.Size()),
 			NFibEntries: uint64(dv.fib.Size()),
+			NPesEntries: uint64(dv.pfx.EntryCount()),
 		}
 	}()
 
@@ -60,161 +63,263 @@ func (dv *Router) mgmtOnStatus(args ndn.InterestHandlerArgs) {
 
 	data, err := dv.engine.Spec().MakeData(name, cfg, status.Encode(), nil)
 	if err != nil {
-		log.Warn(dv, "Failed to make readvertise response Data", "err", err)
+		log.Warn(dv, "Failed to make status response Data", "err", err)
 		return
 	}
 
 	args.Reply(data.Wire)
 }
 
-// Received advertisement Interest
-func (dv *Router) mgmtOnRib(args ndn.InterestHandlerArgs) {
-	res := &mgmt.ControlResponse{
-		Val: &mgmt.ControlResponseVal{
-			StatusCode: 400,
-			StatusText: "Failed to execute command",
-			Params:     nil,
-		},
-	}
-
-	defer func() {
-		signer := sig.NewSha256Signer()
-		data, err := dv.engine.Spec().MakeData(
-			args.Interest.Name(),
-			&ndn.DataConfig{
-				ContentType: optional.Some(ndn.ContentTypeBlob),
-				Freshness:   optional.Some(1 * time.Second),
-			},
-			res.Encode(),
-			signer)
-		if err != nil {
-			log.Warn(dv, "Failed to make readvertise response Data", "err", err)
-			return
-		}
-		args.Reply(data.Wire)
-	}()
-
-	// /localhost/dv/rib/register/h%0C%07%07%08%05cathyo%01A/params-sha256=...
-	// /localhost/dv/rib/unregister/h%0C%07%07%08%05cathyo%01A/params-sha256=...
-	iname := args.Interest.Name()
-	if len(iname) != 6 {
-		log.Warn(dv, "Invalid readvertise Interest", "name", iname)
-		return
-	}
-
-	module, cmd, advC := iname[2], iname[3], iname[4]
-	if module.String() != "rib" {
-		log.Warn(dv, "Unknown readvertise module", "name", iname)
-		return
-	}
-
-	params, err := mgmt.ParseControlParameters(enc.NewBufferView(advC.Val), false)
-	if err != nil || params.Val == nil || params.Val.Name == nil {
-		log.Warn(dv, "Failed to parse readvertised name", "err", err)
-		return
-	}
-
-	name := params.Val.Name
-	face := params.Val.FaceId.GetOr(0)
-	cost := params.Val.Cost.GetOr(0)
-
-	log.Debug(dv, "Received readvertise request", "cmd", cmd, "name", name)
-	dv.mutex.Lock()
-	defer dv.mutex.Unlock()
-
-	switch cmd.String() {
-	case "register":
-		dv.pfx.Announce(name, face, cost)
-	case "unregister":
-		dv.pfx.Withdraw(name, face)
-	default:
-		log.Warn(dv, "Unknown readvertise cmd", "cmd", cmd)
-		return
-	}
-
-	res.Val.StatusCode = 200
-	res.Val.StatusText = "Readvertise command successful"
-	res.Val.Params = &mgmt.ControlArgs{
-		Name:   params.Val.Name,
-		FaceId: optional.Some(uint64(1)), // NFD compatibility
-		Origin: optional.Some(uint64(65)),
-	}
-}
-
 // Received prefix egress state Interest
 func (dv *Router) mgmtOnPrefix(args ndn.InterestHandlerArgs) {
-	res := &mgmt.ControlResponse{
-		Val: &mgmt.ControlResponseVal{
-			StatusCode: 400,
-			StatusText: "Failed to execute command",
-			Params:     nil,
-		},
+	const (
+		cmdAnnounce = "announce"
+		cmdList     = "list"
+		cmdWithdraw = "withdraw"
+	)
+
+	interestName := args.Interest.Name()
+	mgmtPrefixLen := len(dv.config.MgmtPrefix())
+
+	if len(interestName) < mgmtPrefixLen+2 {
+		log.Warn(dv, "Invalid prefix Interest", "name", interestName)
+		return
 	}
 
-	defer func() {
-		signer := sig.NewSha256Signer()
-		data, err := dv.engine.Spec().MakeData(
-			args.Interest.Name(),
-			&ndn.DataConfig{
-				ContentType: optional.Some(ndn.ContentTypeBlob),
-				Freshness:   optional.Some(1 * time.Second),
-			},
-			res.Encode(),
-			signer)
+	if interestName[mgmtPrefixLen].String() != "prefix" {
+		log.Warn(dv, "Unknown prefix module", "name", interestName)
+		return
+	}
+
+	cmdName := interestName[mgmtPrefixLen+1].String()
+	replyData := func(content enc.Wire, signer ndn.Signer, errMsg string) {
+		cfg := &ndn.DataConfig{
+			ContentType: optional.Some(ndn.ContentTypeBlob),
+			Freshness:   optional.Some(1 * time.Second),
+		}
+		data, err := dv.engine.Spec().MakeData(args.Interest.Name(), cfg, content, signer)
 		if err != nil {
-			log.Warn(dv, "Failed to make prefix response Data", "err", err)
+			log.Warn(dv, errMsg, "err", err)
 			return
 		}
 		args.Reply(data.Wire)
-	}()
-
-	// /localhost/dv/prefix/announce/h%0C%07%07%08%05cathyo%01A/params-sha256=...
-	// /localhost/dv/prefix/withdraw/h%0C%07%07%08%05cathyo%01A/params-sha256=...
-	iname := args.Interest.Name()
-	if len(iname) != 6 {
-		log.Warn(dv, "Invalid prefix Interest", "name", iname)
-		return
+	}
+	failureResponse := func() *mgmt.ControlResponse {
+		return &mgmt.ControlResponse{
+			Val: &mgmt.ControlResponseVal{
+				StatusCode: 400,
+				StatusText: "Failed to execute command",
+				Params:     nil,
+			},
+		}
 	}
 
-	module, cmd, argC := iname[2], iname[3], iname[4]
-	if module.String() != "prefix" {
-		log.Warn(dv, "Unknown prefix module", "name", iname)
-		return
-	}
+	switch cmdName {
+	case cmdList:
+		if len(interestName) != mgmtPrefixLen+2 {
+			log.Warn(dv, "Invalid prefix-list Interest", "name", interestName)
+			return
+		}
 
-	params, err := mgmt.ParseControlParameters(enc.NewBufferView(argC.Val), false)
-	if err != nil || params.Val == nil || params.Val.Name == nil {
-		log.Warn(dv, "Failed to parse prefix args", "err", err)
-		return
-	}
+		entries := dv.pfx.SnapshotEntries()
+		now := time.Now().UTC()
+		var out strings.Builder
+		out.WriteString("Prefix list:\n")
 
-	name := params.Val.Name
-	face := params.Val.FaceId.GetOr(0)
-	cost := params.Val.Cost.GetOr(0)
-	if cost > config.CostInfinity {
-		log.Warn(dv, "Invalid prefix cost", "cost", cost)
-		return
-	}
+		if len(entries) == 0 {
+			out.WriteString("  (empty)\n")
+		} else {
+			type prefixListEntry struct {
+				name          enc.Name
+				egressExpires map[string]string
+				localNexthops string
+			}
 
-	log.Debug(dv, "Received prefix request", "cmd", cmd, "name", name, "face", face, "cost", cost)
-	dv.mutex.Lock()
-	defer dv.mutex.Unlock()
+			prefixes := make(map[string]*prefixListEntry)
+			egressSet := make(map[string]struct{})
+			for _, entry := range entries {
+				remaining := "never"
+				if validity := entry.ValidityPeriod; validity != nil {
+					if validity.NotAfter != "" {
+						if end, err := time.Parse(spec.TimeFmt, validity.NotAfter); err == nil {
+							d := end.Sub(now)
+							if d <= 0 {
+								remaining = "0s"
+							} else {
+								remaining = d.Round(time.Second).String()
+							}
+						} else {
+							remaining = "invalid"
+						}
+					}
+				}
 
-	switch cmd.String() {
-	case "announce":
-		dv.pfx.Announce(name, face, cost)
-	case "withdraw":
-		dv.pfx.Withdraw(name, face)
+				key := entry.Name.TlvStr()
+				group := prefixes[key]
+				if group == nil {
+					group = &prefixListEntry{
+						name:          entry.Name.Clone(),
+						egressExpires: make(map[string]string),
+						localNexthops: "none",
+					}
+					prefixes[key] = group
+				}
+
+				egress := entry.Router.String()
+				egressSet[egress] = struct{}{}
+				group.egressExpires[egress] = remaining
+
+				if entry.Router.Equal(dv.config.RouterName()) && len(entry.NextHops) > 0 {
+					nextHops := make([]table.PrefixNextHop, len(entry.NextHops))
+					copy(nextHops, entry.NextHops)
+					slices.SortFunc(nextHops, func(a, b table.PrefixNextHop) int {
+						if a.Face == b.Face {
+							if a.Cost == b.Cost {
+								return 0
+							}
+							if a.Cost < b.Cost {
+								return -1
+							}
+							return 1
+						}
+						if a.Face < b.Face {
+							return -1
+						}
+						return 1
+					})
+
+					parts := make([]string, 0, len(nextHops))
+					for _, nh := range nextHops {
+						parts = append(parts, fmt.Sprintf("face=%d(cost=%d)", nh.Face, nh.Cost))
+					}
+					group.localNexthops = strings.Join(parts, ", ")
+				}
+			}
+
+			prefixKeys := make([]string, 0, len(prefixes))
+			for key := range prefixes {
+				prefixKeys = append(prefixKeys, key)
+			}
+			slices.Sort(prefixKeys)
+
+			for _, key := range prefixKeys {
+				group := prefixes[key]
+
+				egresses := make([]string, 0, len(group.egressExpires))
+				for egress := range group.egressExpires {
+					egresses = append(egresses, egress)
+				}
+				slices.Sort(egresses)
+
+				egressParts := make([]string, 0, len(egresses))
+				for _, egress := range egresses {
+					egressParts = append(egressParts, fmt.Sprintf("%s(expires=%s)", egress, group.egressExpires[egress]))
+				}
+
+				fmt.Fprintf(&out,
+					"  prefix=%s egresses={%s} nexthops={%s}\n",
+					group.name, strings.Join(egressParts, ", "), group.localNexthops)
+			}
+
+			egressRouters := make([]string, 0, len(egressSet))
+			for router := range egressSet {
+				egressRouters = append(egressRouters, router)
+			}
+			slices.Sort(egressRouters)
+			out.WriteString("  egressRouters={")
+			out.WriteString(strings.Join(egressRouters, ", "))
+			out.WriteString("}\n")
+		}
+
+		replyData(enc.Wire{[]byte(out.String())}, nil, "Failed to make prefix-list response Data")
+	case cmdAnnounce:
+		if len(interestName) != mgmtPrefixLen+4 {
+			log.Warn(dv, "Invalid prefix Interest", "name", interestName)
+			return
+		}
+
+		res := failureResponse()
+		defer func() {
+			replyData(res.Encode(), sig.NewSha256Signer(), "Failed to make prefix response Data")
+		}()
+
+		argComp := interestName[mgmtPrefixLen+2]
+		params, err := mgmt.ParseControlParameters(enc.NewBufferView(argComp.Val), false)
+		if err != nil || params.Val == nil || params.Val.Name == nil {
+			log.Warn(dv, "Failed to parse prefix args", "err", err)
+			return
+		}
+
+		name := params.Val.Name
+		log.Debug(dv, "Received prefix request", "cmd", cmdName, "name", name)
+
+		expires, ok := params.Val.ExpirationPeriod.Get()
+		if !ok || expires == 0 {
+			res.Val.StatusText = "Prefix announce requires expires>0 (milliseconds)"
+			log.Warn(dv, "Invalid prefix announce expires", "name", name, "status", res.Val.StatusText)
+			return
+		}
+
+		maxExpirationMs := uint64((1<<63 - 1) / int64(time.Millisecond))
+		if expires > maxExpirationMs {
+			res.Val.StatusText = "Prefix announce expires is too large"
+			log.Warn(dv, "Invalid prefix announce expires", "name", name, "status", res.Val.StatusText)
+			return
+		}
+
+		validity := &spec.ValidityPeriod{
+			NotAfter: time.Now().UTC().Add(time.Duration(expires) * time.Millisecond).Format(spec.TimeFmt),
+		}
+
+		dv.mutex.Lock()
+		dv.pfx.Announce(name, 0, 0, validity)
+		dv.mutex.Unlock()
+
+		res.Val.StatusCode = 200
+		res.Val.StatusText = "Prefix egress state command successful"
+		res.Val.Params = &mgmt.ControlArgs{
+			Name:             name,
+			ExpirationPeriod: optional.Some(expires),
+		}
+	case cmdWithdraw:
+		if len(interestName) != mgmtPrefixLen+4 {
+			log.Warn(dv, "Invalid prefix Interest", "name", interestName)
+			return
+		}
+
+		res := failureResponse()
+		defer func() {
+			replyData(res.Encode(), sig.NewSha256Signer(), "Failed to make prefix response Data")
+		}()
+
+		argComp := interestName[mgmtPrefixLen+2]
+		params, err := mgmt.ParseControlParameters(enc.NewBufferView(argComp.Val), false)
+		if err != nil || params.Val == nil || params.Val.Name == nil {
+			log.Warn(dv, "Failed to parse prefix args", "err", err)
+			return
+		}
+
+		name := params.Val.Name
+		log.Debug(dv, "Received prefix request", "cmd", cmdName, "name", name)
+
+		dv.mutex.Lock()
+		dv.pfx.WithdrawRoute(name)
+		dv.mutex.Unlock()
+
+		res.Val.StatusCode = 200
+		res.Val.StatusText = "Prefix egress state command successful"
+		res.Val.Params = &mgmt.ControlArgs{Name: name}
 	default:
-		log.Warn(dv, "Unknown prefix cmd", "cmd", cmd)
-		return
-	}
+		if len(interestName) != mgmtPrefixLen+4 {
+			log.Warn(dv, "Invalid prefix Interest", "name", interestName)
+			return
+		}
 
-	res.Val.StatusCode = 200
-	res.Val.StatusText = "Prefix egress state command successful"
-	res.Val.Params = &mgmt.ControlArgs{
-		Name:   params.Val.Name,
-		FaceId: optional.Some(face),
-		Cost:   optional.Some(cost),
+		res := failureResponse()
+		defer func() {
+			replyData(res.Encode(), sig.NewSha256Signer(), "Failed to make prefix response Data")
+		}()
+
+		log.Warn(dv, "Unknown prefix cmd", "cmd", cmdName)
 	}
 }

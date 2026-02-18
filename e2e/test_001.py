@@ -37,7 +37,7 @@ def scenario(ndn: Minindn, network='/minindn'):
     for node in put_nodes:
         prefix = f"{network}/{node.name}/test"
         # Explicitly inject into DV prefix egress state so PET replication can carry it.
-        node.cmd(f'ndnd dv prefix-announce prefix={prefix} cost=0')
+        node.cmd(f'ndnd dv prefix-announce prefix={prefix}')
         cmd = f'ndnd put --expose "{prefix}" < {test_file} &'
         info(f'{node.name} {cmd}\n')
         node.cmd(cmd)
