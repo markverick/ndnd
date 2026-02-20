@@ -36,7 +36,7 @@ func MakeUnixStreamTransport(remoteURI *defn.URI, localURI *defn.URI, conn net.C
 
 	// Set connection
 	t.conn = conn.(*net.UnixConn)
-	t.running.Store(true)
+	t.setRunning(true)
 
 	return t, nil
 }
@@ -106,7 +106,7 @@ func (t *UnixStreamTransport) runReceive() {
 
 // (AI GENERATED DESCRIPTION): Marks the Unix stream transport as stopped and closes its underlying connection if it was running.
 func (t *UnixStreamTransport) Close() {
-	if t.running.Swap(false) {
+	if t.setRunning(false) {
 		t.conn.Close()
 	}
 }

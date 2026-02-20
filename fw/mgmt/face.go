@@ -11,6 +11,7 @@ import (
 	"math"
 	"net"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/named-data/ndnd/fw/core"
@@ -24,7 +25,15 @@ import (
 // FaceModule is the module that handles Face Management.
 type FaceModule struct {
 	manager *Thread
+
+	eventMu          sync.RWMutex
+	eventSeq         uint64
+	eventCache       map[uint64]*mgmt.FaceEventNotification
+	eventHistory     []uint64
+	eventUnsubscribe func()
 }
+
+const faceEventHistoryLimit = 256
 
 // (AI GENERATED DESCRIPTION): Returns the fixed identifier string for the Face module (`"mgmt-face"`), used for naming and logging.
 func (f *FaceModule) String() string {
@@ -34,6 +43,16 @@ func (f *FaceModule) String() string {
 // (AI GENERATED DESCRIPTION): Assigns the supplied `Thread` instance as the manager for the `FaceModule`, storing it in the module’s `manager` field.
 func (f *FaceModule) registerManager(manager *Thread) {
 	f.manager = manager
+
+	f.eventMu.Lock()
+	f.eventSeq = 0
+	f.eventCache = make(map[uint64]*mgmt.FaceEventNotification)
+	f.eventHistory = f.eventHistory[:0]
+	if f.eventUnsubscribe != nil {
+		f.eventUnsubscribe()
+	}
+	f.eventUnsubscribe = face.FaceTable.SubscribeEvents(f.recordFaceEvent)
+	f.eventMu.Unlock()
 }
 
 // (AI GENERATED DESCRIPTION): Returns the manager Thread associated with this FaceModule.
@@ -58,6 +77,8 @@ func (f *FaceModule) handleIncomingInterest(interest *Interest) {
 		f.update(interest)
 	case "destroy":
 		f.destroy(interest)
+	case "event", "events":
+		f.events(interest, verb)
 	case "list":
 		f.list(interest)
 	case "query":
@@ -445,6 +466,129 @@ func (f *FaceModule) destroy(interest *Interest) {
 	f.manager.sendCtrlResp(interest, 200, "OK", params)
 }
 
+func (f *FaceModule) events(interest *Interest, verb string) {
+	baseName := LOCAL_PREFIX.
+		Append(enc.NewGenericComponent("faces")).
+		Append(enc.NewGenericComponent(verb))
+
+	seq, notification := f.selectFaceEvent(baseName, interest.Name(), interest.CanBePrefix())
+	if notification == nil {
+		return
+	}
+
+	f.manager.sendDataWithFreshness(
+		interest,
+		baseName.Append(enc.NewSequenceNumComponent(seq)),
+		notification.Encode(),
+		time.Millisecond,
+	)
+}
+
+func (f *FaceModule) selectFaceEvent(baseName enc.Name, interestName enc.Name, canBePrefix bool) (uint64, *mgmt.FaceEventNotification) {
+	f.eventMu.RLock()
+	defer f.eventMu.RUnlock()
+
+	if len(f.eventHistory) == 0 {
+		return 0, nil
+	}
+
+	if len(interestName) == len(baseName) {
+		latest := f.eventHistory[len(f.eventHistory)-1]
+		return latest, f.eventCache[latest]
+	}
+
+	if len(interestName) != len(baseName)+1 {
+		return 0, nil
+	}
+
+	sequenceComponent := interestName[len(baseName)]
+	if !sequenceComponent.IsSequenceNum() {
+		return 0, nil
+	}
+	requestedSeq := sequenceComponent.NumberVal()
+
+	if notification := f.eventCache[requestedSeq]; notification != nil {
+		return requestedSeq, notification
+	}
+
+	if canBePrefix {
+		for _, seq := range f.eventHistory {
+			if seq > requestedSeq {
+				if notification := f.eventCache[seq]; notification != nil {
+					return seq, notification
+				}
+			}
+		}
+	}
+
+	return 0, nil
+}
+
+func (f *FaceModule) recordFaceEvent(event face.FaceEvent) {
+	if event.Face == nil {
+		return
+	}
+	faceID := event.FaceID
+	if faceID == 0 {
+		faceID = event.Face.FaceID()
+	}
+
+	eventKind := f.toMgmtFaceEventKind(event.Kind)
+	if eventKind == 0 {
+		return
+	}
+
+	notification := &mgmt.FaceEventNotification{
+		Val: &mgmt.FaceEventNotificationValue{
+			FaceEventKind:   eventKind,
+			FaceId:          faceID,
+			Uri:             event.Face.RemoteURI().String(),
+			LocalUri:        event.Face.LocalURI().String(),
+			FaceScope:       uint64(event.Face.Scope()),
+			FacePersistency: uint64(event.Face.Persistency()),
+			LinkType:        uint64(event.Face.LinkType()),
+			Flags:           f.faceFlags(event.Face),
+		},
+	}
+
+	sequence := f.cacheFaceEvent(notification)
+	core.Log.Trace(f, "Recorded face event", "kind", event.Kind.String(), "faceid", faceID, "seq", sequence)
+}
+
+func (f *FaceModule) toMgmtFaceEventKind(kind face.FaceEventKind) uint64 {
+	switch kind {
+	case face.FaceEventCreated:
+		return mgmt.FaceEventCreated
+	case face.FaceEventDestroyed:
+		return mgmt.FaceEventDestroyed
+	case face.FaceEventUp:
+		return mgmt.FaceEventUp
+	case face.FaceEventDown:
+		return mgmt.FaceEventDown
+	default:
+		core.Log.Warn(f, "Ignoring unknown face event kind", "kind", kind)
+		return 0
+	}
+}
+
+func (f *FaceModule) cacheFaceEvent(notification *mgmt.FaceEventNotification) uint64 {
+	f.eventMu.Lock()
+	defer f.eventMu.Unlock()
+
+	f.eventSeq++
+	sequence := f.eventSeq
+	f.eventCache[sequence] = notification
+	f.eventHistory = append(f.eventHistory, sequence)
+
+	if len(f.eventHistory) > faceEventHistoryLimit {
+		oldest := f.eventHistory[0]
+		f.eventHistory = f.eventHistory[1:]
+		delete(f.eventCache, oldest)
+	}
+
+	return sequence
+}
+
 // (AI GENERATED DESCRIPTION): Responds to a `faces/list` Interest on the local prefix by collecting all registered faces, assembling them into a sorted `FaceStatusMsg` dataset, and sending that dataset back to the requester.
 func (f *FaceModule) list(interest *Interest) {
 	if len(interest.Name()) > len(LOCAL_PREFIX)+2 {
@@ -548,6 +692,24 @@ func (f *FaceModule) query(interest *Interest) {
 	f.manager.sendStatusDataset(interest, interest.Name(), dataset.Encode())
 }
 
+func (f *FaceModule) faceFlags(selectedFace face.LinkService) uint64 {
+	linkService, ok := selectedFace.(*face.NDNLPLinkService)
+	if !ok {
+		return 0
+	}
+
+	options := linkService.Options()
+	flags := uint64(options.Flags())
+	if options.IsConsumerControlledForwardingEnabled {
+		flags |= face.FaceFlagLocalFields
+	}
+	if options.IsCongestionMarkingEnabled {
+		flags |= face.FaceFlagCongestionMarking
+	}
+
+	return flags
+}
+
 // (AI GENERATED DESCRIPTION): Creates a `mgmt.FaceStatus` dataset from a `face.LinkService`, populating its identifiers, statistics, and optional NDN‑LP configuration flags for use in management reporting.
 func (f *FaceModule) createDataset(selectedFace face.LinkService) *mgmt.FaceStatus {
 	faceDataset := &mgmt.FaceStatus{
@@ -573,17 +735,9 @@ func (f *FaceModule) createDataset(selectedFace face.LinkService) *mgmt.FaceStat
 	linkService, ok := selectedFace.(*face.NDNLPLinkService)
 	if ok {
 		options := linkService.Options()
-
 		faceDataset.BaseCongestionMarkInterval = optional.Some(uint64(options.BaseCongestionMarkingInterval.Nanoseconds()))
 		faceDataset.DefaultCongestionThreshold = optional.Some(options.DefaultCongestionThresholdBytes)
-		faceDataset.Flags = options.Flags()
-		if options.IsConsumerControlledForwardingEnabled {
-			// This one will only be enabled if the other two local fields are enabled (and vice versa)
-			faceDataset.Flags |= face.FaceFlagLocalFields
-		}
-		if options.IsCongestionMarkingEnabled {
-			faceDataset.Flags |= face.FaceFlagCongestionMarking
-		}
+		faceDataset.Flags = f.faceFlags(selectedFace)
 	}
 
 	return faceDataset

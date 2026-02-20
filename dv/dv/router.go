@@ -1,6 +1,9 @@
 package dv
 
 import (
+	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,6 +93,37 @@ func NewRouter(config *config.Config, engine ndn.Engine) (*Router, error) {
 		trust.UseDataNameFwHint = true
 	}
 
+	// Create prefix insertion trust configuration.
+	var insertionTrust *sec.TrustConfig = nil
+	switch strings.TrimSpace(config.PrefixInsertionSchemaPath) {
+	case "", "insecure":
+		log.Warn(nil, "Prefix insertion security is disabled - insecure mode")
+	case "deny":
+		log.Warn(nil, "Prefix insertion handler is disabled")
+	default:
+		insertionStore := storage.NewMemoryStore()
+		kc, err := keychain.NewKeyChain(config.PrefixInsertionKeychainUri, insertionStore)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open prefix insertion keychain: %w", err)
+		}
+
+		schemaBytes, err := os.ReadFile(config.PrefixInsertionSchemaPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read prefix insertion schema: %w", err)
+		}
+		schema, err := trust_schema.NewLvsSchema(schemaBytes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse prefix insertion schema: %w", err)
+		}
+
+		anchors := config.PrefixInsertionTrustAnchorNames()
+		insertionTrust, err = sec.NewTrustConfig(kc, schema, anchors)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create prefix insertion trust config: %w", err)
+		}
+		insertionTrust.UseDataNameFwHint = true
+	}
+
 	// Create the DV router
 	dv := &Router{
 		engine: engine,
@@ -109,7 +143,7 @@ func NewRouter(config *config.Config, engine ndn.Engine) (*Router, error) {
 	}
 
 	// Create prefix egress state daemon.
-	dv.pfx = NewPrefixModule(dv.config, dv.client, dv.nfdc)
+	dv.pfx = NewPrefixModule(dv.config, dv.client, insertionTrust, dv.nfdc)
 
 	// Create DV tables
 	dv.neighbors = table.NewNeighborTable(config, dv.nfdc)
@@ -206,6 +240,8 @@ func (dv *Router) configureFace() (err error) {
 
 // Register interest handlers for DV prefixes.
 func (dv *Router) register() (err error) {
+	neighborsPrefix := enc.LOCALHOP.Append(enc.NewGenericComponent("neighbors"))
+
 	// Advertisement Sync (active)
 	err = dv.engine.AttachHandler(dv.config.AdvertisementSyncActivePrefix(),
 		func(args ndn.InterestHandlerArgs) {
@@ -234,12 +270,14 @@ func (dv *Router) register() (err error) {
 	}
 
 	insertPrefix := dv.pfx.InsertionPrefix()
-	err = dv.engine.AttachHandler(insertPrefix,
-		func(args ndn.InterestHandlerArgs) {
-			go dv.pfx.OnInsertion(args)
-		})
-	if err != nil {
-		return err
+	if dv.pfx.InsertionEnabled() {
+		err = dv.engine.AttachHandler(insertPrefix,
+			func(args ndn.InterestHandlerArgs) {
+				go dv.pfx.OnInsertion(args)
+			})
+		if err != nil {
+			return err
+		}
 	}
 
 	// Register routes to forwarder
@@ -249,7 +287,9 @@ func (dv *Router) register() (err error) {
 		dv.pfx.SyncPrefix(),
 		dv.pfx.DataPrefix(),
 		dv.config.MgmtPrefix(),
-		insertPrefix,
+	}
+	if dv.pfx.InsertionEnabled() {
+		pfxs = append(pfxs, insertPrefix)
 	}
 
 	for _, prefix := range pfxs {
@@ -269,17 +309,17 @@ func (dv *Router) register() (err error) {
 		Cmd:    "add-egress",
 		Args: &mgmt.ControlArgs{
 			Name:   dv.pfx.SyncPrefix(),
-			Egress: &mgmt.EgressRecord{Name: enc.LOCALHOP.Append(enc.NewGenericComponent("broadcast"))},
+			Egress: &mgmt.EgressRecord{Name: neighborsPrefix.Clone()},
 		},
 		Retries: -1,
 	})
-	// Set Advertisement Sync to localhop broadcast
+	// Set Advertisement Sync to localhop neighbors
 	dv.nfdc.Exec(nfdc.NfdMgmtCmd{
 		Module: "pet",
 		Cmd:    "add-egress",
 		Args: &mgmt.ControlArgs{
 			Name:   dv.config.AdvertisementSyncPrefix(),
-			Egress: &mgmt.EgressRecord{Name: enc.LOCALHOP.Append(enc.NewGenericComponent("broadcast"))},
+			Egress: &mgmt.EgressRecord{Name: neighborsPrefix.Clone()},
 		},
 		Retries: -1,
 	})
@@ -313,6 +353,8 @@ func (dv *Router) register() (err error) {
 
 // createFaces creates faces to all neighbors.
 func (dv *Router) createFaces() {
+	neighborsPrefix := enc.LOCALHOP.Append(enc.NewGenericComponent("neighbors"))
+
 	for i, neighbor := range dv.config.Neighbors {
 		var mtu optional.Optional[uint64]
 		if neighbor.Mtu > 0 {
@@ -335,12 +377,12 @@ func (dv *Router) createFaces() {
 		dv.config.Neighbors[i].Created = created
 		dv.mutex.Unlock()
 
-		// Add neighbor to localhop broadcast
+		// Add neighbor to localhop neighbors
 		dv.nfdc.Exec(nfdc.NfdMgmtCmd{
 			Module: "fib",
 			Cmd:    "add-nexthop",
 			Args: &mgmt.ControlArgs{
-				Name:   enc.LOCALHOP.Append(enc.NewGenericComponent("broadcast")),
+				Name:   neighborsPrefix.Clone(),
 				Cost:   optional.Some(uint64(1)),
 				FaceId: optional.Some(faceId),
 			},
@@ -351,13 +393,15 @@ func (dv *Router) createFaces() {
 
 // destroyFaces synchronously destroys our faces to neighbors.
 func (dv *Router) destroyFaces() {
+	neighborsPrefix := enc.LOCALHOP.Append(enc.NewGenericComponent("neighbors"))
+
 	for _, neighbor := range dv.config.Neighbors {
 		if neighbor.FaceId == 0 {
 			continue
 		}
 
 		dv.engine.ExecMgmtCmd("fib", "remove-nexthop", &mgmt.ControlArgs{
-			Name:   enc.LOCALHOP.Append(enc.NewGenericComponent("broadcast")),
+			Name:   neighborsPrefix.Clone(),
 			FaceId: optional.Some(neighbor.FaceId),
 		})
 

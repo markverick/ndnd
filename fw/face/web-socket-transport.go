@@ -30,7 +30,7 @@ func NewWebSocketTransport(localURI *defn.URI, c *websocket.Conn) (t *WebSocketT
 
 	t = &WebSocketTransport{c: c}
 	t.makeTransportBase(remoteURI, localURI, spec_mgmt.PersistencyOnDemand, scope, defn.PointToPoint, defn.MaxNDNPacketSize)
-	t.running.Store(true)
+	t.setRunning(true)
 
 	return t
 }
@@ -105,6 +105,6 @@ func (t *WebSocketTransport) runReceive() {
 
 // (AI GENERATED DESCRIPTION): Stops the WebSocketTransport from running and closes the underlying WebSocket connection.
 func (t *WebSocketTransport) Close() {
-	t.running.Store(false)
+	t.setRunning(false)
 	t.c.Close()
 }

@@ -38,7 +38,7 @@ func CmdPingServer() *cobra.Command {
 		Run:     ps.run,
 	}
 
-	cmd.Flags().BoolVar(&ps.expose, "expose", false, "Use client origin for prefix registration")
+	cmd.Flags().BoolVar(&ps.expose, "expose", false, "Expose prefix through routing (DV or gateway insertion)")
 	return cmd
 }
 

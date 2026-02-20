@@ -253,34 +253,52 @@ func (dv *Router) mgmtOnPrefix(args ndn.InterestHandlerArgs) {
 		name := params.Val.Name
 		log.Debug(dv, "Received prefix request", "cmd", cmdName, "name", name)
 
-		expires, ok := params.Val.ExpirationPeriod.Get()
-		if !ok || expires == 0 {
-			res.Val.StatusText = "Prefix announce requires expires>0 (milliseconds)"
-			log.Warn(dv, "Invalid prefix announce expires", "name", name, "status", res.Val.StatusText)
-			return
+		faceID := uint64(0)
+		if fid, ok := params.Val.FaceId.Get(); ok && fid != 0 {
+			faceID = fid
+		} else if args.IncomingFaceId.IsSet() {
+			faceID = args.IncomingFaceId.Unwrap()
+		}
+		cost := params.Val.Cost.GetOr(0)
+		if faceID == 0 {
+			cost = 0
 		}
 
-		maxExpirationMs := uint64((1<<63 - 1) / int64(time.Millisecond))
-		if expires > maxExpirationMs {
-			res.Val.StatusText = "Prefix announce expires is too large"
-			log.Warn(dv, "Invalid prefix announce expires", "name", name, "status", res.Val.StatusText)
-			return
+		var validity *spec.ValidityPeriod
+		responseParams := &mgmt.ControlArgs{
+			Name: name,
+			Cost: optional.Some(cost),
 		}
+		if faceID != 0 {
+			responseParams.FaceId = optional.Some(faceID)
+		}
+		if expires, ok := params.Val.ExpirationPeriod.Get(); ok {
+			if expires == 0 {
+				res.Val.StatusText = "Prefix announce expires must be >0 (milliseconds)"
+				log.Warn(dv, "Invalid prefix announce expires", "name", name, "status", res.Val.StatusText)
+				return
+			}
 
-		validity := &spec.ValidityPeriod{
-			NotAfter: time.Now().UTC().Add(time.Duration(expires) * time.Millisecond).Format(spec.TimeFmt),
+			maxExpirationMs := uint64((1<<63 - 1) / int64(time.Millisecond))
+			if expires > maxExpirationMs {
+				res.Val.StatusText = "Prefix announce expires is too large"
+				log.Warn(dv, "Invalid prefix announce expires", "name", name, "status", res.Val.StatusText)
+				return
+			}
+
+			validity = &spec.ValidityPeriod{
+				NotAfter: time.Now().UTC().Add(time.Duration(expires) * time.Millisecond).Format(spec.TimeFmt),
+			}
+			responseParams.ExpirationPeriod = optional.Some(expires)
 		}
 
 		dv.mutex.Lock()
-		dv.pfx.Announce(name, 0, 0, validity)
+		dv.pfx.Announce(name, faceID, cost, validity)
 		dv.mutex.Unlock()
 
 		res.Val.StatusCode = 200
 		res.Val.StatusText = "Prefix egress state command successful"
-		res.Val.Params = &mgmt.ControlArgs{
-			Name:             name,
-			ExpirationPeriod: optional.Some(expires),
-		}
+		res.Val.Params = responseParams
 	case cmdWithdraw:
 		if len(interestName) != mgmtPrefixLen+4 {
 			log.Warn(dv, "Invalid prefix Interest", "name", interestName)
@@ -302,13 +320,27 @@ func (dv *Router) mgmtOnPrefix(args ndn.InterestHandlerArgs) {
 		name := params.Val.Name
 		log.Debug(dv, "Received prefix request", "cmd", cmdName, "name", name)
 
+		faceID := uint64(0)
+		if fid, ok := params.Val.FaceId.Get(); ok && fid != 0 {
+			faceID = fid
+		} else if args.IncomingFaceId.IsSet() {
+			faceID = args.IncomingFaceId.Unwrap()
+		}
+
 		dv.mutex.Lock()
-		dv.pfx.WithdrawRoute(name)
+		if faceID != 0 {
+			dv.pfx.Withdraw(name, faceID)
+		} else {
+			dv.pfx.WithdrawRoute(name)
+		}
 		dv.mutex.Unlock()
 
 		res.Val.StatusCode = 200
 		res.Val.StatusText = "Prefix egress state command successful"
 		res.Val.Params = &mgmt.ControlArgs{Name: name}
+		if faceID != 0 {
+			res.Val.Params.FaceId = optional.Some(faceID)
+		}
 	default:
 		if len(interestName) != mgmtPrefixLen+4 {
 			log.Warn(dv, "Invalid prefix Interest", "name", interestName)

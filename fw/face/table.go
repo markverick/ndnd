@@ -23,8 +23,10 @@ var FaceTable Table
 
 // Table hold all faces used by the forwarder.
 type Table struct {
-	faces      sync.Map
-	nextFaceID atomic.Uint64 // starts at 1
+	faces              sync.Map
+	nextFaceID         atomic.Uint64 // starts at 1
+	eventSubscriptions sync.Map      // map[uint64]func(FaceEvent)
+	nextSubscriptionID atomic.Uint64
 }
 
 // (AI GENERATED DESCRIPTION): Implements the fmt.Stringer interface for Table, returning the literal string “face-table” as its textual identifier.
@@ -38,6 +40,11 @@ func (t *Table) Add(face LinkService) {
 	face.SetFaceID(faceID)
 	t.faces.Store(faceID, face)
 	dispatch.AddFace(faceID, face)
+	t.emitEvent(FaceEvent{
+		Kind:   FaceEventCreated,
+		FaceID: faceID,
+		Face:   face,
+	})
 	core.Log.Debug(t, "Registered face", "faceid", faceID)
 }
 
@@ -76,10 +83,52 @@ func (t *Table) GetAll() []LinkService {
 
 // Remove removes a face from the face table.
 func (t *Table) Remove(id uint64) {
+	selectedFace := t.Get(id)
+
 	t.faces.Delete(id)
 	dispatch.RemoveFace(id)
 	table.Rib.CleanUpFace(id)
+	table.Pet.CleanUpFace(id)
+	if selectedFace != nil {
+		t.emitEvent(FaceEvent{
+			Kind:   FaceEventDestroyed,
+			FaceID: id,
+			Face:   selectedFace,
+		})
+	}
 	core.Log.Info(t, "Unregistered face", "faceid", id)
+}
+
+// SubscribeEvents subscribes to face lifecycle events.
+// The returned function unsubscribes when called.
+func (t *Table) SubscribeEvents(callback func(FaceEvent)) func() {
+	if callback == nil {
+		return func() {}
+	}
+
+	subscriptionID := t.nextSubscriptionID.Add(1)
+	t.eventSubscriptions.Store(subscriptionID, callback)
+
+	return func() {
+		t.eventSubscriptions.Delete(subscriptionID)
+	}
+}
+
+func (t *Table) emitEvent(event FaceEvent) {
+	t.eventSubscriptions.Range(func(_, value interface{}) bool {
+		callback, ok := value.(func(FaceEvent))
+		if !ok || callback == nil {
+			return true
+		}
+
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				core.Log.Error(t, "face event subscription panicked", "recovered", recovered)
+			}
+		}()
+		callback(event)
+		return true
+	})
 }
 
 // expirationHandler stops the faces that have expired

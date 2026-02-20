@@ -66,13 +66,13 @@ func (t *NullTransport) sendFrame([]byte) {
 
 // (AI GENERATED DESCRIPTION): Marks the NullTransport as running and blocks until a signal is received on the close channel to terminate the receiver.
 func (t *NullTransport) runReceive() {
-	t.running.Store(true)
+	t.setRunning(true)
 	<-t.close
 }
 
 // (AI GENERATED DESCRIPTION): Atomically marks the transport as inactive and, if it was previously running, sends a signal on the close channel to trigger shutdown.
 func (t *NullTransport) Close() {
-	if t.running.Swap(false) {
+	if t.setRunning(false) {
 		t.close <- true
 	}
 }

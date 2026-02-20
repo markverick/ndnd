@@ -108,7 +108,7 @@ func AcceptUnicastTCPTransport(
 		core.Log.Error(t, "Specified connection is not a net.TCPConn", "conn", remoteConn)
 		return nil, fmt.Errorf("specified connection is not a net.TCPConn")
 	}
-	t.running.Store(true)
+	t.setRunning(true)
 
 	// Set connection
 	t.setConn(conn)
@@ -265,13 +265,13 @@ func (t *UnicastTCPTransport) runReceive() {
 		}
 
 		core.Log.Info(t, "Connected socket - Face UP")
-		t.running.Store(true)
+		t.setRunning(true)
 	}
 }
 
 // Close the inner connection if running without closing the transport.
 func (t *UnicastTCPTransport) CloseConn() {
-	if t.running.Swap(false) {
+	if t.setRunning(false) {
 		t.conn.Close()
 	}
 }

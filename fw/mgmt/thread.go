@@ -175,10 +175,14 @@ func (m *Thread) sendInterest(name enc.Name, params enc.Wire) {
 
 // Send a Data packet to the internal transport
 func (m *Thread) sendData(interest *Interest, name enc.Name, content enc.Wire) {
+	m.sendDataWithFreshness(interest, name, content, 0)
+}
+
+func (m *Thread) sendDataWithFreshness(interest *Interest, name enc.Name, content enc.Wire, freshness time.Duration) {
 	data, err := spec.Spec{}.MakeData(name,
 		&ndn.DataConfig{
 			ContentType: optional.Some(ndn.ContentTypeBlob),
-			Freshness:   optional.Some(time.Duration(0)),
+			Freshness:   optional.Some(freshness),
 		},
 		content,
 		m.signer,

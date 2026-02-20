@@ -170,6 +170,22 @@ func (c *Config) Parse() (err error) {
 		}
 		c.prefixInsertionTrustAnchorsN = append(c.prefixInsertionTrustAnchorsN, name)
 	}
+	switch c.PrefixInsertionSchemaPath {
+	case "", "insecure", "deny":
+		// Allowed modes:
+		// - insecure: do not validate prefix announcements.
+		// - deny: disable prefix-insertion handler.
+		// - empty: keep backward compatibility with legacy configs.
+	default:
+		if c.PrefixInsertionKeychainUri == "" ||
+			c.PrefixInsertionKeychainUri == "undefined" ||
+			c.PrefixInsertionKeychainUri == "insecure" {
+			return fmt.Errorf("prefix insertion keychain must be configured when schema is enabled")
+		}
+		if len(c.prefixInsertionTrustAnchorsN) == 0 {
+			return fmt.Errorf("prefix insertion trust anchors must be configured when schema is enabled")
+		}
+	}
 
 	// Advertisement sync and data prefixes
 	c.advSyncPfxN = enc.LOCALHOP.

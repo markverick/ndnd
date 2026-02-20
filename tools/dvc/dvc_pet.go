@@ -6,15 +6,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/ndn"
 	mgmt "github.com/named-data/ndnd/std/ndn/mgmt_2022"
 	"github.com/named-data/ndnd/std/object"
-	sig "github.com/named-data/ndnd/std/security/signer"
 	"github.com/named-data/ndnd/std/types/optional"
-	"github.com/named-data/ndnd/std/utils"
 )
 
 func (t *Tool) preprocessPetArg(key string, val string) (string, string) {
@@ -119,71 +116,6 @@ func (t *Tool) convPetArg(ctrlArgs *mgmt.ControlArgs, key string, val string) {
 		fmt.Fprintf(os.Stderr, "Unknown command argument key: %s\n", key)
 		os.Exit(9)
 	}
-}
-
-func (t *Tool) execDvMgmtCmd(module string, cmd string, args *mgmt.ControlArgs) (*mgmt.ControlResponse, error) {
-	params := mgmt.ControlParameters{Val: args}
-	name := enc.Name{
-		enc.LOCALHOST,
-		enc.NewGenericComponent("dv"),
-		enc.NewGenericComponent(module),
-		enc.NewGenericComponent(cmd),
-		enc.NewGenericBytesComponent(params.Bytes()),
-	}
-
-	cfg := &ndn.InterestConfig{
-		Lifetime:    optional.Some(1 * time.Second),
-		Nonce:       utils.ConvertNonce(t.engine.Timer().Nonce()),
-		MustBeFresh: true,
-		SigNonce:    t.engine.Timer().Nonce(),
-		SigTime:     optional.Some(time.Duration(t.engine.Timer().Now().UnixMilli()) * time.Millisecond),
-	}
-
-	interest, err := t.engine.Spec().MakeInterest(name, cfg, enc.Wire{}, sig.NewSha256Signer())
-	if err != nil {
-		return nil, err
-	}
-
-	type mgmtResp struct {
-		err error
-		val *mgmt.ControlResponse
-	}
-	respCh := make(chan *mgmtResp, 1)
-
-	err = t.engine.Express(interest, func(args ndn.ExpressCallbackArgs) {
-		resp := &mgmtResp{}
-		defer func() {
-			respCh <- resp
-		}()
-
-		switch args.Result {
-		case ndn.InterestResultNack:
-			resp.err = fmt.Errorf("nack received: %v", args.NackReason)
-		case ndn.InterestResultTimeout:
-			resp.err = ndn.ErrDeadlineExceed
-		case ndn.InterestResultData:
-			ret, perr := mgmt.ParseControlResponse(enc.NewWireView(args.Data.Content()), true)
-			if perr != nil {
-				resp.err = perr
-			} else {
-				resp.val = ret
-				if ret.Val == nil {
-					resp.err = fmt.Errorf("improper response")
-				} else if ret.Val.StatusCode != 200 {
-					resp.err = fmt.Errorf("command failed due to error %d: %s",
-						ret.Val.StatusCode, ret.Val.StatusText)
-				}
-			}
-		default:
-			resp.err = fmt.Errorf("unknown result: %v", args.Result)
-		}
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	resp := <-respCh
-	return resp.val, resp.err
 }
 
 func (t *Tool) printCtrlResponse(res *mgmt.ControlResponse) {
