@@ -157,6 +157,26 @@ func (t *transportBase) IsRunning() bool {
 	return t.running.Load()
 }
 
+func (t *transportBase) setRunning(running bool) bool {
+	changed := t.running.Swap(running) != running
+	if !changed || t.linkService == nil || t.faceID == 0 {
+		return changed
+	}
+
+	kind := FaceEventDown
+	if running {
+		kind = FaceEventUp
+	}
+
+	FaceTable.emitEvent(FaceEvent{
+		Kind:   kind,
+		FaceID: t.faceID,
+		Face:   t.linkService,
+	})
+
+	return true
+}
+
 //
 // Counters
 //

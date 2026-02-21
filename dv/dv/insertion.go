@@ -10,6 +10,7 @@ import (
 	"github.com/named-data/ndnd/std/ndn"
 	mgmt "github.com/named-data/ndnd/std/ndn/mgmt_2022"
 	spec "github.com/named-data/ndnd/std/ndn/spec_2022"
+	sec "github.com/named-data/ndnd/std/security"
 	sig "github.com/named-data/ndnd/std/security/signer"
 	"github.com/named-data/ndnd/std/types/optional"
 )
@@ -41,6 +42,17 @@ func (pfx *PrefixModule) onInsertion(args ndn.InterestHandlerArgs) {
 		args.Reply(data.Wire)
 	}
 
+	if !pfx.insertionEnabled {
+		reply(&mgmt.ControlResponse{
+			Val: &mgmt.ControlResponseVal{
+				StatusCode: 403,
+				StatusText: "Prefix insertion handler is disabled",
+				Params:     nil,
+			},
+		})
+		return
+	}
+
 	// If there is no incoming face ID, we can't use this.
 	if !args.IncomingFaceId.IsSet() {
 		log.Warn(pfx, "Received Prefix Insertion with no incoming face ID, ignoring")
@@ -66,14 +78,34 @@ func (pfx *PrefixModule) onInsertion(args ndn.InterestHandlerArgs) {
 		return
 	}
 
-	object, _, err := spec.Spec{}.ReadData(enc.NewBufferView(paParams.Data))
+	object, sigCov, err := spec.Spec{}.ReadData(enc.NewBufferView(paParams.Data))
 	if err != nil {
 		log.Warn(pfx, "Failed to parse Prefix Insertion inner data", "err", err)
 		reply(resError)
 		return
 	}
 
-	reply(pfx.onPrefixInsertionObject(object, args.IncomingFaceId.Unwrap()))
+	faceId := args.IncomingFaceId.Unwrap()
+	if pfx.insertionTrust == nil {
+		reply(pfx.onPrefixInsertionObject(object, faceId))
+		return
+	}
+
+	pfx.validatePrefixAnnouncement(object, sigCov, args.IncomingFaceId, func(valid bool, err error) {
+		if !valid || err != nil {
+			log.Warn(pfx, "Prefix insertion signature validation failed",
+				"name", object.Name(), "valid", valid, "err", err)
+			reply(&mgmt.ControlResponse{
+				Val: &mgmt.ControlResponseVal{
+					StatusCode: 403,
+					StatusText: "Prefix announcement signature validation failed",
+					Params:     nil,
+				},
+			})
+			return
+		}
+		reply(pfx.onPrefixInsertionObject(object, faceId))
+	})
 }
 
 func (pfx *PrefixModule) onPrefixInsertionObject(object ndn.Data, faceId uint64) *mgmt.ControlResponse {
@@ -215,7 +247,7 @@ func (pfx *PrefixModule) onPrefixInsertionObject(object ndn.Data, faceId uint64)
 		return resError
 	}
 
-	pfx.AnnounceWithValidity(prefix, faceId, cost, params.ValidityPeriod)
+	pfx.Announce(prefix, faceId, cost, params.ValidityPeriod)
 
 	return &mgmt.ControlResponse{
 		Val: &mgmt.ControlResponseVal{
@@ -261,4 +293,42 @@ func parseLegacyExpirationPeriod(piWire enc.Wire) (expiration uint64, has bool, 
 	}
 
 	return 0, false, nil
+}
+
+func (pfx *PrefixModule) validatePrefixAnnouncement(
+	object ndn.Data,
+	sigCov enc.Wire,
+	incomingFace optional.Optional[uint64],
+	callback func(bool, error),
+) {
+	if pfx.insertionTrust == nil {
+		callback(true, nil)
+		return
+	}
+
+	overrideName := object.Name()
+	if len(overrideName) >= 2 && overrideName.At(-1).IsSegment() && overrideName.At(-2).IsVersion() {
+		overrideName = overrideName.Prefix(-2)
+	}
+
+	pfx.insertionTrust.Validate(sec.TrustConfigValidateArgs{
+		Data:         object,
+		DataSigCov:   sigCov,
+		OverrideName: overrideName,
+		Fetch: func(name enc.Name, cfg *ndn.InterestConfig, cb ndn.ExpressCallbackFunc) {
+			if cfg == nil {
+				cfg = &ndn.InterestConfig{}
+			}
+			cfg.NextHopId = incomingFace
+
+			pfx.client.ExpressR(ndn.ExpressRArgs{
+				Name:     name,
+				Config:   cfg,
+				Retries:  3,
+				Callback: cb,
+				TryStore: pfx.client.Store(),
+			})
+		},
+		Callback: callback,
+	})
 }

@@ -7,8 +7,10 @@ import (
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/log"
 	"github.com/named-data/ndnd/std/ndn"
-	"github.com/named-data/ndnd/std/ndn/mgmt_2022"
+	mgmt "github.com/named-data/ndnd/std/ndn/mgmt_2022"
+	sig "github.com/named-data/ndnd/std/security/signer"
 	"github.com/named-data/ndnd/std/types/optional"
+	"github.com/named-data/ndnd/std/utils"
 )
 
 var announceMutex sync.Mutex
@@ -42,17 +44,61 @@ func (c *Client) announcePrefix_(args ndn.Announcement) {
 	time.Sleep(1 * time.Millisecond) // thanks NFD
 	announceMutex.Unlock()
 
-	_, err := c.engine.ExecMgmtCmd("pet", "add-nexthop", &mgmt_2022.ControlArgs{
-		Name: args.Name,
-		Cost: optional.Some(uint64(args.Cost)),
-	})
-	if err != nil {
-		log.Warn(c, "Failed to register prefix", "err", err)
+	hasLocalForwarder := c.engine.Face().IsLocal()
+	useLocalRouting := hasLocalForwarder && args.Expose && c.preferLocalRouting
+	if useLocalRouting {
+		_, err := mgmt.ExecServiceCmd(
+			c.engine, true, "dv", "prefix", "announce",
+			&mgmt.ControlArgs{
+				Name: args.Name,
+				Cost: optional.Some(args.Cost),
+			},
+			&ndn.InterestConfig{
+				Lifetime:    optional.Some(commandTimeout),
+				Nonce:       utils.ConvertNonce(c.engine.Timer().Nonce()),
+				MustBeFresh: true,
+				SigNonce:    c.engine.Timer().Nonce(),
+				SigTime:     optional.Some(time.Duration(c.engine.Timer().Now().UnixMilli()) * time.Millisecond),
+			},
+			sig.NewSha256Signer(),
+			nil,
+		)
+		if err != nil {
+			log.Warn(c, "Failed to announce prefix through local routing daemon", "name", args.Name, "err", err)
+			if args.OnError != nil {
+				args.OnError(err)
+			}
+		} else {
+			log.Info(c, "Exposed prefix through local routing daemon", "name", args.Name)
+		}
+		return
+	}
+
+	if hasLocalForwarder {
+		if _, err := c.engine.ExecMgmtCmd("pet", "add-nexthop", &mgmt.ControlArgs{
+			Name: args.Name,
+			Cost: optional.Some(args.Cost),
+		}); err != nil {
+			log.Warn(c, "Failed to register prefix in local PET", "name", args.Name, "err", err)
+			if args.OnError != nil {
+				args.OnError(err)
+			}
+			return
+		}
+		log.Info(c, "Registered prefix in local PET", "name", args.Name)
+	}
+
+	if !args.Expose {
+		return
+	}
+
+	if err := c.insertPrefix(args, false); err != nil {
+		log.Warn(c, "Failed to expose prefix through gateway insertion", "name", args.Name, "err", err)
 		if args.OnError != nil {
 			args.OnError(err)
 		}
 	} else {
-		log.Info(c, "Registered prefix", "name", args.Name)
+		log.Info(c, "Exposed prefix through gateway insertion", "name", args.Name)
 	}
 }
 
@@ -62,16 +108,59 @@ func (c *Client) withdrawPrefix_(args ndn.Announcement, onError func(error)) {
 	time.Sleep(1 * time.Millisecond) // thanks NFD
 	announceMutex.Unlock()
 
-	_, err := c.engine.ExecMgmtCmd("pet", "remove-nexthop", &mgmt_2022.ControlArgs{
-		Name: args.Name,
-	})
-	if err != nil {
-		log.Warn(c, "Failed to unregister prefix", "err", err)
+	hasLocalForwarder := c.engine.Face().IsLocal()
+	useLocalRouting := hasLocalForwarder && args.Expose && c.preferLocalRouting
+	if useLocalRouting {
+		_, err := mgmt.ExecServiceCmd(
+			c.engine, true, "dv", "prefix", "withdraw",
+			&mgmt.ControlArgs{
+				Name: args.Name,
+			},
+			&ndn.InterestConfig{
+				Lifetime:    optional.Some(commandTimeout),
+				Nonce:       utils.ConvertNonce(c.engine.Timer().Nonce()),
+				MustBeFresh: true,
+				SigNonce:    c.engine.Timer().Nonce(),
+				SigTime:     optional.Some(time.Duration(c.engine.Timer().Now().UnixMilli()) * time.Millisecond),
+			},
+			sig.NewSha256Signer(),
+			nil,
+		)
+		if err != nil {
+			log.Warn(c, "Failed to withdraw prefix through local routing daemon", "name", args.Name, "err", err)
+			if onError != nil {
+				onError(err)
+			}
+		} else {
+			log.Info(c, "Withdrew prefix through local routing daemon", "name", args.Name)
+		}
+		return
+	}
+
+	if hasLocalForwarder {
+		if _, err := c.engine.ExecMgmtCmd("pet", "remove-nexthop", &mgmt.ControlArgs{
+			Name: args.Name,
+		}); err != nil {
+			log.Warn(c, "Failed to unregister prefix from local PET", "name", args.Name, "err", err)
+			if onError != nil {
+				onError(err)
+			}
+			return
+		}
+		log.Info(c, "Unregistered prefix from local PET", "name", args.Name)
+	}
+
+	if !args.Expose {
+		return
+	}
+
+	if err := c.insertPrefix(args, true); err != nil {
+		log.Warn(c, "Failed to withdraw prefix through gateway insertion", "name", args.Name, "err", err)
 		if onError != nil {
 			onError(err)
 		}
 	} else {
-		log.Info(c, "Unregistered prefix", "name", args.Name)
+		log.Info(c, "Withdrew prefix through gateway insertion", "name", args.Name)
 	}
 }
 

@@ -31,5 +31,7 @@ dv:
 
   # [optional] Period of Advertisement Sync Interests (ms)
   advertise_interval: 5000
+  # [optional] Period of Prefix Sync Interests (ms)
+  prefix_sync_interval: 5000
   # [optional] Time after which a neighbor is considered dead (ms)
   router_dead_interval: 30000

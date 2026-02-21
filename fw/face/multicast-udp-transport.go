@@ -63,7 +63,7 @@ func MakeMulticastUDPTransport(localURI *defn.URI) (*MulticastUDPTransport, erro
 
 	// Configure dialer so we can allow address reuse
 	t.dialer = &net.Dialer{LocalAddr: &t.localAddr, Control: impl.SyscallReuseAddr}
-	t.running.Store(true)
+	t.setRunning(true)
 
 	// Create send connection
 	err := t.connectSend()
@@ -189,7 +189,7 @@ func (t *MulticastUDPTransport) runReceive() {
 
 // (AI GENERATED DESCRIPTION): Gracefully shuts down the MulticastUDPTransport, closing its send and receive UDP connections if the transport was running.
 func (t *MulticastUDPTransport) Close() {
-	if t.running.Swap(false) {
+	if t.setRunning(false) {
 		if t.sendConn != nil {
 			t.sendConn.Close()
 		}

@@ -607,66 +607,16 @@ func (e *Engine) ExecMgmtCmd(module string, cmd string, args any) (any, error) {
 		Lifetime:    optional.Some(1 * time.Second),
 		Nonce:       utils.ConvertNonce(e.timer.Nonce()),
 		MustBeFresh: true,
-
-		// Signed interest shenanigans (NFD wants this)
-		SigNonce: e.timer.Nonce(),
-		SigTime:  optional.Some(time.Duration(e.timer.Now().UnixMilli()) * time.Millisecond),
+		SigNonce:    e.timer.Nonce(),
+		SigTime:     optional.Some(time.Duration(e.timer.Now().UnixMilli()) * time.Millisecond),
 	}
-	interest, err := e.mgmtConf.MakeCmd(module, cmd, cmdArgs, intCfg)
+	interest, err := e.mgmtConf.MakeCmd("nfd", module, cmd, cmdArgs, intCfg)
 	if err != nil {
 		return nil, err
 	}
 
-	type mgmtResp struct {
-		err error
-		val *mgmt.ControlResponse
-	}
-	respCh := make(chan *mgmtResp)
-
-	err = e.Express(interest, func(args ndn.ExpressCallbackArgs) {
-		resp := &mgmtResp{}
-		defer func() {
-			respCh <- resp
-			close(respCh)
-		}()
-
-		if args.Result == ndn.InterestResultNack {
-			resp.err = fmt.Errorf("nack received: %v", args.NackReason)
-		} else if args.Result == ndn.InterestResultTimeout {
-			resp.err = ndn.ErrDeadlineExceed
-		} else if args.Result == ndn.InterestResultData {
-			data := args.Data
-			valid := e.cmdChecker(data.Name(), args.SigCovered, data.Signature())
-			if !valid {
-				resp.err = fmt.Errorf("command signature is not valid")
-			} else {
-				ret, err := mgmt.ParseControlResponse(enc.NewWireView(data.Content()), true)
-				if err != nil {
-					resp.err = err
-				} else {
-					resp.val = ret
-					if ret.Val != nil {
-						if ret.Val.StatusCode == 200 {
-							return
-						} else {
-							resp.err = fmt.Errorf("command failed due to error %d: %s",
-								ret.Val.StatusCode, ret.Val.StatusText)
-						}
-					} else {
-						resp.err = fmt.Errorf("improper response")
-					}
-				}
-			}
-		} else {
-			resp.err = fmt.Errorf("unknown result: %v", args.Result)
-		}
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	resp := <-respCh
-	return resp.val, resp.err
+	resp, err := mgmt.ExpressCmd(e, interest, e.cmdChecker)
+	return resp, err
 }
 
 // (AI GENERATED DESCRIPTION): Sets the Engine’s command security by assigning a signer for management packets and a validator function for checking incoming command signatures.

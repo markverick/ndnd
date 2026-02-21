@@ -13,7 +13,14 @@ class NDNd_DV(Application):
     config: str
     network: str
 
-    def __init__(self, node, network=DEFAULT_NETWORK):
+    def __init__(
+        self,
+        node,
+        network=DEFAULT_NETWORK,
+        prefix_insertion_schema='insecure',
+        prefix_insertion_keychain='insecure',
+        prefix_insertion_trust_anchors=None,
+    ):
         Application.__init__(self, node)
         self.network = network
 
@@ -24,6 +31,8 @@ class NDNd_DV(Application):
             raise Exception('Trust root not initialized (call NDNDV.init_trust first)')
 
         self.init_keys()
+        if prefix_insertion_trust_anchors is None:
+            prefix_insertion_trust_anchors = []
 
         config = {
             'dv': {
@@ -31,6 +40,9 @@ class NDNd_DV(Application):
                 'router': f"{network}/{node.name}",
                 'keychain': f'dir://{self.homeDir}/dv-keys',
                 'trust_anchors': [TRUST_ROOT_NAME],
+                'prefix_insertion_schema': prefix_insertion_schema,
+                'prefix_insertion_keychain': prefix_insertion_keychain,
+                'prefix_insertion_trust_anchors': prefix_insertion_trust_anchors,
                 'neighbors': list(self.neighbors()),
             }
         }

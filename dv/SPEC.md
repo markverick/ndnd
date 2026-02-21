@@ -23,9 +23,9 @@ Advertisement Broadcast Interest  = /localhop/<network>/32=DV/32=ADS/32=ACT
 Advertisement Broadcast Interest  = /localhop/<network>/32=DV/32=ADS/32=PSV
 Advertisement Broadcast Data      = /localhop/<router>/32=DV/32=ADV/32=SYNC
 Advertisement Data                = /localhop/<router>/32=DV/32=ADV/t=<boot>/v=<seq>
-Prefix Group SVS                  = /<network>/32=DV/32=PFS/32=svs
-Prefix Data                       = /<network>/32=DV/32=PFS/<router>/t=<boot>/seq=<seq>/v=0
-Prefix Snapshot                   = /<network>/32=DV/32=PFS/<router>/t=<boot>/32=SNAP/v=<seq>
+Prefix Group SVS                  = /<network>/32=DV/32=PES/32=svs
+Prefix Data                       = /<network>/32=DV/32=PES/<router>/t=<boot>/seq=<seq>/v=0
+Prefix Snapshot                   = /<network>/32=DV/32=PES/<router>/t=<boot>/32=SNAP/v=<seq>
 
 <router>  = router's unique name in the network
 <network> = globally unique network prefix

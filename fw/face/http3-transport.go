@@ -21,7 +21,7 @@ type HTTP3Transport struct {
 func NewHTTP3Transport(remote, local netip.AddrPort, c *webtransport.Session) (t *HTTP3Transport) {
 	t = &HTTP3Transport{c: c}
 	t.makeTransportBase(defn.MakeQuicFaceURI(remote), defn.MakeQuicFaceURI(local), spec_mgmt.PersistencyOnDemand, defn.NonLocal, defn.PointToPoint, 1000)
-	t.running.Store(true)
+	t.setRunning(true)
 	return
 }
 
@@ -84,6 +84,6 @@ func (t *HTTP3Transport) runReceive() {
 
 // (AI GENERATED DESCRIPTION): Closes the HTTP/3 transport by marking it stopped and shutting down the underlying connection without error.
 func (t *HTTP3Transport) Close() {
-	t.running.Store(false)
+	t.setRunning(false)
 	t.c.CloseWithError(0, "")
 }

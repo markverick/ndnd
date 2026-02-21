@@ -149,21 +149,21 @@ func (ns *NeighborState) delete() {
 func (ns *NeighborState) localRoute() enc.Name {
 	return enc.LOCALHOP.
 		Append(ns.Name...).
-		Append(enc.NewKeywordComponent("DV"))
+		Append(enc.NewKeywordComponent("DV")).
+		Append(enc.NewKeywordComponent("ADV"))
 }
 
 // Register route to this neighbor
 func (ns *NeighborState) routeRegister(faceId uint64) {
 	ns.faceId = faceId
 
-	register := func(route enc.Name) {
+	registerFibNexthop := func(route enc.Name) {
 		ns.nt.nfdc.Exec(nfdc.NfdMgmtCmd{
-			Module: "rib",
-			Cmd:    "register",
+			Module: "fib",
+			Cmd:    "add-nexthop",
 			Args: &mgmt.ControlArgs{
 				Name:   route,
 				FaceId: optional.Some(faceId),
-				Origin: optional.Some(config.NlsrOrigin),
 				Cost:   optional.Some(uint64(0)),
 			},
 			Retries: 3,
@@ -175,21 +175,17 @@ func (ns *NeighborState) routeRegister(faceId uint64) {
 			Cmd:    "add-egress",
 			Args: &mgmt.ControlArgs{
 				Name:   route,
-				Egress: &mgmt.EgressRecord{Name: route},
+				Egress: &mgmt.EgressRecord{Name: ns.Name.Clone()},
 			},
 			Retries: 3,
 		})
 	}
 
+	registerFibNexthop(ns.Name)
+
 	// For fetching advertisements from neighbor
 	localRoute := ns.localRoute()
-	register(localRoute)
 	registerPetEgress(localRoute)
-	// Passive advertisement sync to neighbor
-	register(ns.nt.config.AdvertisementSyncPassivePrefix())
-	// For prefix egress state sync group
-	register(ns.nt.config.PrefixEgreStatePrefix().
-		Append(enc.NewKeywordComponent("svs")))
 }
 
 // Single attempt to unregister the route
@@ -198,14 +194,13 @@ func (ns *NeighborState) routeUnregister() {
 		return // not set
 	}
 
-	unregister := func(route enc.Name) {
+	unregisterFibNexthop := func(route enc.Name) {
 		ns.nt.nfdc.Exec(nfdc.NfdMgmtCmd{
-			Module: "rib",
-			Cmd:    "unregister",
+			Module: "fib",
+			Cmd:    "remove-nexthop",
 			Args: &mgmt.ControlArgs{
 				Name:   route,
 				FaceId: optional.Some(ns.faceId),
-				Origin: optional.Some(config.NlsrOrigin),
 			},
 			Retries: 1,
 		})
@@ -216,26 +211,15 @@ func (ns *NeighborState) routeUnregister() {
 			Cmd:    "remove-egress",
 			Args: &mgmt.ControlArgs{
 				Name:   route,
-				Egress: &mgmt.EgressRecord{Name: route},
+				Egress: &mgmt.EgressRecord{Name: ns.Name.Clone()},
 			},
 			Retries: 1,
 		})
 	}
 
+	unregisterFibNexthop(ns.Name)
+
 	// Always remove local data routes to neighbor
 	localRoute := ns.localRoute()
-	unregister(localRoute)
 	unregisterPetEgress(localRoute)
-
-	// If there are multiple neighbors on this face, we do not
-	// want to unregister the global routes to the face.
-	for _, ons := range ns.nt.neighbors {
-		if ons != ns && ons.faceId == ns.faceId {
-			return // skip global unregistration
-		}
-	}
-
-	unregister(ns.nt.config.AdvertisementSyncPassivePrefix())
-	unregister(ns.nt.config.PrefixEgreStatePrefix().
-		Append(enc.NewKeywordComponent("svs")))
 }

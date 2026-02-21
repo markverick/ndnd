@@ -1,6 +1,9 @@
 package dv
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,7 +16,10 @@ import (
 	"github.com/named-data/ndnd/std/ndn"
 	mgmt "github.com/named-data/ndnd/std/ndn/mgmt_2022"
 	spec "github.com/named-data/ndnd/std/ndn/spec_2022"
+	sec "github.com/named-data/ndnd/std/security"
 	ndn_sync "github.com/named-data/ndnd/std/sync"
+	"github.com/named-data/ndnd/std/types/optional"
+	"github.com/named-data/ndnd/std/utils"
 )
 
 type PrefixModule struct {
@@ -21,6 +27,9 @@ type PrefixModule struct {
 	pfx                *table.PrefixEgreState
 	pfxSvs             *ndn_sync.SvsALO
 	nfdc               *nfdc.NfdMgmtThread
+	client             ndn.Client
+	insertionTrust     *sec.TrustConfig
+	insertionEnabled   bool
 	replicatePes       bool
 	pfxGroup           enc.Name
 	insertPrefix       enc.Name
@@ -29,6 +38,11 @@ type PrefixModule struct {
 	petPrefixes        map[uint64]map[string]enc.Name
 	seenPrefixVersions map[string]uint64
 	prefixPruneStop    chan struct{}
+	faceEventsStop     chan struct{}
+	faceEventsDone     chan struct{}
+	activeFacesMu      sync.RWMutex
+	activeFaces        map[uint64]struct{}
+	seenFaces          map[uint64]struct{}
 	routerName         enc.Name
 }
 
@@ -38,9 +52,21 @@ type petEgressOp struct {
 	egress enc.Name
 }
 
+type petNextHopOp struct {
+	verb string
+	name enc.Name
+	face uint64
+	cost uint64
+}
+
 // const PrefixSnapThreshold = 50
 
-func NewPrefixModule(config *config.Config, objectClient ndn.Client, nfdcThread *nfdc.NfdMgmtThread) *PrefixModule {
+func NewPrefixModule(
+	config *config.Config,
+	objectClient ndn.Client,
+	insertionTrust *sec.TrustConfig,
+	nfdcThread *nfdc.NfdMgmtThread,
+) *PrefixModule {
 	var ptable *table.PrefixEgreState
 
 	// Subscription List
@@ -53,8 +79,9 @@ func NewPrefixModule(config *config.Config, objectClient ndn.Client, nfdcThread 
 	pfxSvs, err := ndn_sync.NewSvsALO(ndn_sync.SvsAloOpts{
 		Name: config.RouterName(),
 		Svs: ndn_sync.SvSyncOpts{
-			Client:      objectClient,
-			GroupPrefix: config.PrefixEgreStatePrefix(),
+			Client:          objectClient,
+			GroupPrefix:     config.PrefixEgreStatePrefix(),
+			PeriodicTimeout: config.PrefixSyncInterval(),
 		},
 		Snapshot: &ndn_sync.SnapshotNodeLatest{
 			Client: objectClient,
@@ -75,13 +102,18 @@ func NewPrefixModule(config *config.Config, objectClient ndn.Client, nfdcThread 
 		}
 	})
 
+	insertionEnabled := strings.TrimSpace(config.PrefixInsertionSchemaPath) != "deny"
+
 	pfxModule := &PrefixModule{
-		mu:           sync.Mutex{},
-		pfx:          ptable,
-		pfxSvs:       pfxSvs,
-		nfdc:         nfdcThread,
-		replicatePes: config.PrefixEgreStateReplicationEnabled(),
-		pfxGroup:     config.PrefixEgreStatePrefix().Clone(),
+		mu:               sync.Mutex{},
+		pfx:              ptable,
+		pfxSvs:           pfxSvs,
+		nfdc:             nfdcThread,
+		client:           objectClient,
+		insertionTrust:   insertionTrust,
+		insertionEnabled: insertionEnabled,
+		replicatePes:     config.PrefixEgreStateReplicationEnabled(),
+		pfxGroup:         config.PrefixEgreStatePrefix().Clone(),
 		insertPrefix: enc.LOCALHOP.
 			Append(enc.NewGenericComponent("route")).
 			Append(enc.NewGenericComponent("insert")),
@@ -89,11 +121,20 @@ func NewPrefixModule(config *config.Config, objectClient ndn.Client, nfdcThread 
 		pfxSubs:            pfxSubs,
 		petPrefixes:        petPrefixes,
 		seenPrefixVersions: seenPrefixVersions,
+		activeFaces:        make(map[uint64]struct{}),
+		seenFaces:          make(map[uint64]struct{}),
 		routerName:         config.RouterName(),
 	}
 	pfxSvs.SetOnPublisher(pfxModule.onPublisher)
 	if !pfxModule.replicatePes {
 		log.Warn(pfxModule, "Prefix egress state replication to PET is disabled")
+	}
+	if pfxModule.insertionEnabled {
+		if pfxModule.insertionTrust == nil {
+			log.Warn(pfxModule, "Prefix insertion signature validation is disabled")
+		} else {
+			log.Info(pfxModule, "Prefix insertion signature validation enabled")
+		}
 	}
 
 	return pfxModule
@@ -101,12 +142,14 @@ func NewPrefixModule(config *config.Config, objectClient ndn.Client, nfdcThread 
 
 func (pfx *PrefixModule) Start() {
 	pfx.pfxSvs.Start()
+	pfx.startFaceEvents()
 	pfx.startPrefixPrune()
 	pfx.pfx.Reset()
 }
 
 func (pfx *PrefixModule) Stop() {
 	pfx.stopPrefixPrune()
+	pfx.stopFaceEvents()
 	pfx.pfxSvs.Stop()
 }
 
@@ -138,7 +181,7 @@ func (pfx *PrefixModule) onPublisher(name enc.Name) {
 				Cmd:    "add-egress",
 				Args: &mgmt.ControlArgs{
 					Name:   route,
-					Egress: &mgmt.EgressRecord{Name: route},
+					Egress: &mgmt.EgressRecord{Name: name.Clone()},
 				},
 				Retries: -1,
 			})
@@ -190,22 +233,22 @@ func (pfx *PrefixModule) Reset() {
 }
 
 // Announce adds or updates a local prefix in prefix egress state.
-func (pfx *PrefixModule) Announce(name enc.Name, face uint64, cost uint64) {
+// Use face=0 and cost=0 for route-only semantics.
+func (pfx *PrefixModule) Announce(name enc.Name, face uint64, cost uint64, validity *spec.ValidityPeriod) {
 	pfx.mu.Lock()
 	petOps := pfx.addRouterPrefixPet(pfx.routerName, name)
-	pfx.pfx.Announce(name, face, cost)
+	pfx.pfx.Announce(name, face, cost, validity)
 	pfx.mu.Unlock()
 
 	pfx.applyPetOps(petOps)
-}
-
-func (pfx *PrefixModule) AnnounceWithValidity(name enc.Name, face uint64, cost uint64, validity *spec.ValidityPeriod) {
-	pfx.mu.Lock()
-	petOps := pfx.addRouterPrefixPet(pfx.routerName, name)
-	pfx.pfx.AnnounceWithValidity(name, face, cost, validity)
-	pfx.mu.Unlock()
-
-	pfx.applyPetOps(petOps)
+	if face != 0 {
+		pfx.applyNextHopOps([]petNextHopOp{{
+			verb: "add-nexthop",
+			name: name.Clone(),
+			face: face,
+			cost: cost,
+		}})
+	}
 }
 
 // (AI GENERATED DESCRIPTION): Removes a next‑hop for the specified name and face from the local prefix egress state and republishes the entry if its cost changes.
@@ -216,6 +259,22 @@ func (pfx *PrefixModule) Withdraw(name enc.Name, face uint64) {
 	if _, ok := pfx.pfx.GetRouter(pfx.routerName).Prefixes[name.TlvStr()]; !ok {
 		petOps = append(petOps, pfx.removeRouterPrefixPet(pfx.routerName, name)...)
 	}
+	pfx.mu.Unlock()
+
+	pfx.applyPetOps(petOps)
+	if face != 0 {
+		pfx.applyNextHopOps([]petNextHopOp{{
+			verb: "remove-nexthop",
+			name: name.Clone(),
+			face: face,
+		}})
+	}
+}
+
+func (pfx *PrefixModule) WithdrawRoute(name enc.Name) {
+	pfx.mu.Lock()
+	petOps := pfx.removeRouterPrefixPet(pfx.routerName, name)
+	pfx.pfx.Withdraw(name, 0)
 	pfx.mu.Unlock()
 
 	pfx.applyPetOps(petOps)
@@ -239,6 +298,20 @@ func (pfx *PrefixModule) Snap() enc.Wire {
 	return pfx.pfx.Snap()
 }
 
+func (pfx *PrefixModule) SnapshotEntries() []table.PrefixSnapshotEntry {
+	pfx.mu.Lock()
+	defer pfx.mu.Unlock()
+
+	return pfx.pfx.SnapshotEntries()
+}
+
+func (pfx *PrefixModule) EntryCount() int {
+	pfx.mu.Lock()
+	defer pfx.mu.Unlock()
+
+	return pfx.pfx.EntryCount()
+}
+
 // information for svs group, need to expose for now to register with mgmt
 func (pfx *PrefixModule) SyncPrefix() enc.Name {
 	return pfx.pfxSvs.SyncPrefix()
@@ -250,6 +323,10 @@ func (pfx *PrefixModule) DataPrefix() enc.Name {
 
 func (pfx *PrefixModule) InsertionPrefix() enc.Name {
 	return pfx.insertPrefix.Clone()
+}
+
+func (pfx *PrefixModule) InsertionEnabled() bool {
+	return pfx.insertionEnabled
 }
 
 func (pfx *PrefixModule) OnInsertion(args ndn.InterestHandlerArgs) {
@@ -283,7 +360,7 @@ func (pfx *PrefixModule) resetRouterPet(router enc.Name) []petEgressOp {
 		return nil
 	}
 
-	egress := pfx.pfxGroup.Append(router...)
+	egress := router.Clone()
 	ops := make([]petEgressOp, 0, len(prefixes))
 	for _, name := range prefixes {
 		ops = append(ops, petEgressOp{
@@ -310,7 +387,7 @@ func (pfx *PrefixModule) addRouterPrefixPet(router enc.Name, prefix enc.Name) []
 	}
 	prefixes[key] = prefix.Clone()
 
-	egress := pfx.pfxGroup.Append(router...)
+	egress := router.Clone()
 	return []petEgressOp{{
 		add:    true,
 		name:   prefix.Clone(),
@@ -334,7 +411,7 @@ func (pfx *PrefixModule) removeRouterPrefixPet(router enc.Name, prefix enc.Name)
 		delete(pfx.petPrefixes, routerHash)
 	}
 
-	egress := pfx.pfxGroup.Append(router...)
+	egress := router.Clone()
 	return []petEgressOp{{
 		add:    false,
 		name:   prefix.Clone(),
@@ -365,6 +442,36 @@ func (pfx *PrefixModule) applyPetOps(ops []petEgressOp) {
 	}
 }
 
+func (pfx *PrefixModule) applyNextHopOps(ops []petNextHopOp) {
+	if pfx.nfdc == nil || len(ops) == 0 {
+		return
+	}
+
+	for _, op := range ops {
+		cmd := op.verb
+		args := &mgmt.ControlArgs{
+			Name:   op.name,
+			FaceId: optional.Some(op.face),
+		}
+		switch cmd {
+		case "add-nexthop":
+			args.Cost = optional.Some(op.cost)
+		case "remove-nexthop":
+			// no additional parameters
+		default:
+			log.Warn(pfx, "Unknown PET nexthop command", "cmd", cmd, "name", op.name, "face", op.face)
+			continue
+		}
+
+		pfx.nfdc.Exec(nfdc.NfdMgmtCmd{
+			Module:  "pet",
+			Cmd:     cmd,
+			Args:    args,
+			Retries: -1,
+		})
+	}
+}
+
 func (pfx *PrefixModule) startPrefixPrune() {
 	pfx.mu.Lock()
 	if pfx.prefixPruneStop != nil {
@@ -381,6 +488,7 @@ func (pfx *PrefixModule) startPrefixPrune() {
 		for {
 			select {
 			case <-ticker.C:
+				pfx.pruneMissingFaces()
 				pfx.pruneExpired()
 			case <-stopCh:
 				return
@@ -412,4 +520,228 @@ func (pfx *PrefixModule) pruneExpired() {
 	pfx.mu.Unlock()
 
 	pfx.applyPetOps(petOps)
+}
+
+func (pfx *PrefixModule) pruneMissingFaces() {
+	if pfx.client == nil {
+		return
+	}
+
+	active, observed := pfx.activeFaceSnapshot()
+
+	type staleRoute struct {
+		name enc.Name
+		face uint64
+	}
+	stale := make([]staleRoute, 0)
+	seenRoutes := make(map[string]struct{})
+
+	pfx.mu.Lock()
+	me := pfx.pfx.GetRouter(pfx.routerName)
+	for _, entry := range me.Prefixes {
+		for _, nh := range entry.NextHops {
+			if nh.Face == 0 {
+				continue
+			}
+			// Without a list bootstrap, we only prune faces we have observed
+			// through the event stream.
+			if _, ok := observed[nh.Face]; !ok {
+				continue
+			}
+			if _, ok := active[nh.Face]; ok {
+				continue
+			}
+
+			key := entry.Name.TlvStr() + "#" + strconv.FormatUint(nh.Face, 10)
+			if _, exists := seenRoutes[key]; exists {
+				continue
+			}
+			seenRoutes[key] = struct{}{}
+			stale = append(stale, staleRoute{
+				name: entry.Name.Clone(),
+				face: nh.Face,
+			})
+		}
+	}
+	pfx.mu.Unlock()
+
+	for _, route := range stale {
+		log.Info(pfx, "Pruning prefix route due to missing face", "name", route.name, "faceid", route.face)
+		pfx.Withdraw(route.name, route.face)
+	}
+}
+
+func (pfx *PrefixModule) activeFaceSnapshot() (map[uint64]struct{}, map[uint64]struct{}) {
+	pfx.activeFacesMu.RLock()
+	defer pfx.activeFacesMu.RUnlock()
+
+	active := make(map[uint64]struct{}, len(pfx.activeFaces))
+	for faceID := range pfx.activeFaces {
+		active[faceID] = struct{}{}
+	}
+	seen := make(map[uint64]struct{}, len(pfx.seenFaces))
+	for faceID := range pfx.seenFaces {
+		seen[faceID] = struct{}{}
+	}
+	return active, seen
+}
+
+func (pfx *PrefixModule) startFaceEvents() {
+	pfx.mu.Lock()
+	if pfx.faceEventsStop != nil {
+		pfx.mu.Unlock()
+		return
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	pfx.faceEventsStop = stop
+	pfx.faceEventsDone = done
+	pfx.mu.Unlock()
+
+	go pfx.runFaceEvents(stop, done)
+}
+
+func (pfx *PrefixModule) stopFaceEvents() {
+	pfx.mu.Lock()
+	stop := pfx.faceEventsStop
+	done := pfx.faceEventsDone
+	pfx.faceEventsStop = nil
+	pfx.faceEventsDone = nil
+	pfx.mu.Unlock()
+
+	if stop != nil {
+		close(stop)
+	}
+	if done != nil {
+		<-done
+	}
+}
+
+func (pfx *PrefixModule) runFaceEvents(stop <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
+
+	var nextSeq uint64 = 0
+	for {
+		select {
+		case <-stop:
+			return
+		default:
+		}
+
+		seq, notification, err := pfx.fetchFaceEvent(nextSeq)
+		if err != nil {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+
+			log.Warn(pfx, "Failed to fetch face event", "err", err)
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		if notification == nil {
+			continue
+		}
+
+		// If a gap appears (history rollover or startup race), discard local
+		// face-state cache and rebuild state from subsequent events only.
+		if nextSeq != 0 && seq > nextSeq {
+			pfx.activeFacesMu.Lock()
+			pfx.activeFaces = make(map[uint64]struct{})
+			pfx.seenFaces = make(map[uint64]struct{})
+			pfx.activeFacesMu.Unlock()
+		}
+		nextSeq = seq + 1
+		pfx.applyFaceEvent(notification)
+	}
+}
+
+func (pfx *PrefixModule) fetchFaceEvent(nextSeq uint64) (uint64, *mgmt.FaceEventNotification, error) {
+	engine := pfx.client.Engine()
+	if engine == nil {
+		return 0, nil, fmt.Errorf("missing client engine")
+	}
+
+	base := enc.Name{
+		enc.LOCALHOST,
+		enc.NewGenericComponent("nfd"),
+		enc.NewGenericComponent("faces"),
+		enc.NewGenericComponent("events"),
+	}
+	name := base.Clone()
+	if nextSeq > 0 {
+		name = name.Append(enc.NewSequenceNumComponent(nextSeq))
+	}
+
+	cfg := &ndn.InterestConfig{
+		CanBePrefix: true,
+		MustBeFresh: true,
+		Lifetime:    optional.Some(1 * time.Second),
+		Nonce:       utils.ConvertNonce(engine.Timer().Nonce()),
+	}
+	interest, err := engine.Spec().MakeInterest(name, cfg, nil, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	ch := make(chan ndn.ExpressCallbackArgs, 1)
+	if err := engine.Express(interest, func(args ndn.ExpressCallbackArgs) {
+		select {
+		case ch <- args:
+		default:
+		}
+	}); err != nil {
+		return 0, nil, err
+	}
+
+	args := <-ch
+	switch args.Result {
+	case ndn.InterestResultTimeout:
+		return 0, nil, nil
+	case ndn.InterestResultData:
+		// continue below
+	default:
+		return 0, nil, fmt.Errorf("face event Interest failed: %s", args.Result)
+	}
+
+	dataName := args.Data.Name()
+	if len(dataName) != len(base)+1 || !base.IsPrefix(dataName) || !dataName.At(-1).IsSequenceNum() {
+		return 0, nil, fmt.Errorf("unexpected face event Data name: %s", dataName)
+	}
+	seq := dataName.At(-1).NumberVal()
+
+	notification, err := mgmt.ParseFaceEventNotification(enc.NewWireView(args.Data.Content()), true)
+	if err != nil || notification == nil || notification.Val == nil {
+		if err == nil {
+			err = fmt.Errorf("invalid face event notification")
+		}
+		return 0, nil, err
+	}
+	return seq, notification, nil
+}
+
+func (pfx *PrefixModule) applyFaceEvent(notification *mgmt.FaceEventNotification) {
+	if notification == nil || notification.Val == nil {
+		return
+	}
+
+	faceID := notification.Val.FaceId
+	if faceID == 0 {
+		return
+	}
+
+	pfx.activeFacesMu.Lock()
+	defer pfx.activeFacesMu.Unlock()
+	pfx.seenFaces[faceID] = struct{}{}
+
+	switch notification.Val.FaceEventKind {
+	case mgmt.FaceEventDestroyed:
+		delete(pfx.activeFaces, faceID)
+	case mgmt.FaceEventCreated, mgmt.FaceEventUp, mgmt.FaceEventDown:
+		// Keep parity with /faces/list snapshot semantics (presence in FaceTable).
+		pfx.activeFaces[faceID] = struct{}{}
+	default:
+		// Ignore unknown kinds.
+	}
 }

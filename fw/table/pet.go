@@ -69,6 +69,24 @@ type petNode struct {
 	entry *petEntryState
 }
 
+func (n *petNode) cleanUpFace(faceID uint64) bool {
+	for hash, child := range n.children {
+		if child.cleanUpFace(faceID) {
+			delete(n.children, hash)
+			child.parent = nil
+		}
+	}
+
+	if n.entry != nil {
+		delete(n.entry.nextHops, faceID)
+		if len(n.entry.egress) == 0 && len(n.entry.nextHops) == 0 {
+			n.entry = nil
+		}
+	}
+
+	return n.parent != nil && n.entry == nil && len(n.children) == 0
+}
+
 // PrefixEgressTable represents the Prefix Egress Table (PET).
 type PrefixEgressTable struct {
 	root  petNode
@@ -123,9 +141,11 @@ func (n *petNode) fillTreeToPrefixEnc(name enc.Name) *petNode {
 }
 
 func (n *petNode) pruneIfEmpty() {
-	for entry := n; entry.parent != nil && entry.entry == nil && len(entry.children) == 0; entry = entry.parent {
-		delete(entry.parent.children, entry.component.Hash())
+	for entry := n; entry != nil && entry.parent != nil && entry.entry == nil && len(entry.children) == 0; {
+		parent := entry.parent
+		delete(parent.children, entry.component.Hash())
 		entry.parent = nil
+		entry = parent
 	}
 }
 
@@ -260,4 +280,12 @@ func (p *PrefixEgressTable) GetAllEntries() []PetEntry {
 	}
 
 	return entries
+}
+
+// CleanUpFace removes all PET next hops that use the specified face.
+func (p *PrefixEgressTable) CleanUpFace(faceID uint64) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	p.root.cleanUpFace(faceID)
 }

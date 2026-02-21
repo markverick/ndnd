@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	enc "github.com/named-data/ndnd/std/encoding"
+	eng "github.com/named-data/ndnd/std/engine"
 	"github.com/named-data/ndnd/std/ndn"
 	sec "github.com/named-data/ndnd/std/security"
 )
@@ -22,6 +23,10 @@ type Client struct {
 	// announcements
 	announcements sync.Map
 	faceCancel    func()
+
+	// Snapshot of client config used for expose/withdraw path selection.
+	clientCfg          eng.ClientConfig
+	preferLocalRouting bool
 }
 
 // Create a new client with given engine and store
@@ -31,6 +36,8 @@ func NewClient(engine ndn.Engine, store ndn.Store, trust *sec.TrustConfig) ndn.C
 	client.store = store
 	client.trust = trust
 	client.fetcher = newRrSegFetcher(client)
+	client.clientCfg = eng.GetClientConfig()
+	client.preferLocalRouting = client.clientCfg.RoutingMode == eng.ClientRoutingModeLocal
 
 	client.announcements = sync.Map{}
 	client.faceCancel = func() {}

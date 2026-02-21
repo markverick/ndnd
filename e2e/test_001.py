@@ -29,11 +29,13 @@ def scenario(ndn: Minindn, network='/minindn'):
     cat_nodes = random.sample(ndn.net.hosts, sample_size)
     cat_requests = [(cat_node, random.choice(put_nodes)) for cat_node in cat_nodes]
     put_prefixes = {f"{network}/{node.name}/test" for node in put_nodes}
+    control_prefixes = {
+        f"{network}/32=DV/32=PES/32=svs",
+        f"/localhop{network}/32=DV/32=ADS/32=PSV",
+    }
 
     for node in put_nodes:
         prefix = f"{network}/{node.name}/test"
-        # Explicitly inject into DV prefix egress state so PET replication can carry it.
-        node.cmd(f'ndnd dv prefix-announce prefix={prefix} cost=0')
         cmd = f'ndnd put --expose "{prefix}" < {test_file} &'
         info(f'{node.name} {cmd}\n')
         node.cmd(cmd)
@@ -48,6 +50,13 @@ def scenario(ndn: Minindn, network='/minindn'):
         for prefix in put_prefixes:
             if prefix in fib:
                 raise Exception(f'App prefix {prefix} unexpectedly present in FIB on {node.name}')
+        for prefix in control_prefixes:
+            if prefix in fib:
+                raise Exception(f'Control prefix {prefix} unexpectedly present in FIB on {node.name}')
+        if f'{network}/32=DV/32=PES/' in fib:
+            raise Exception(f'Router-specific PES entries unexpectedly present in FIB on {node.name}')
+        if f'/localhop{network}/' in fib and '/32=DV' in fib:
+            raise Exception(f'Router-specific localhop DV entries unexpectedly present in FIB on {node.name}')
 
     for node, put_node in cat_requests:
         cmd = f'ndnd cat "{network}/{put_node.name}/test" > recv.test.bin 2> cat.log'

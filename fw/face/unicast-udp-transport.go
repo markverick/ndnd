@@ -84,7 +84,7 @@ func MakeUnicastUDPTransport(
 	}
 
 	t.conn = conn.(*net.UDPConn)
-	t.running.Store(true)
+	t.setRunning(true)
 
 	if localURI == nil {
 		t.localAddr = *t.conn.LocalAddr().(*net.UDPAddr)
@@ -158,7 +158,7 @@ func (t *UnicastUDPTransport) runReceive() {
 
 // (AI GENERATED DESCRIPTION): Closes the UDP connection if it is currently active, atomically setting the running flag to false.
 func (t *UnicastUDPTransport) Close() {
-	if t.running.Swap(false) {
+	if t.setRunning(false) {
 		t.conn.Close()
 	}
 }

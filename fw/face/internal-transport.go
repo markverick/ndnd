@@ -36,7 +36,7 @@ func MakeInternalTransport() *InternalTransport {
 		defn.MaxNDNPacketSize)
 	t.recvQueue = make(chan []byte, CfgFaceQueueSize())
 	t.sendQueue = make(chan []byte, CfgFaceQueueSize())
-	t.running.Store(true)
+	t.setRunning(true)
 	return t
 }
 
@@ -144,7 +144,7 @@ func (t *InternalTransport) runReceive() {
 
 // (AI GENERATED DESCRIPTION): Closes the transport by atomically marking it inactive and closing its receive‑queue channel, leaving the send queue to be garbage‑collected.
 func (t *InternalTransport) Close() {
-	if t.running.Swap(false) {
+	if t.setRunning(false) {
 		// do not close the send queue, let it be garbage collected
 		close(t.recvQueue)
 	}

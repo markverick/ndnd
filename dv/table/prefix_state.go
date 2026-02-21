@@ -29,8 +29,16 @@ type PrefixEntry struct {
 	Multicast bool
 	// ValidityPeriod from prefix inserter side, optional.
 	ValidityPeriod *spec.ValidityPeriod
-	// Only known for the local router
+	// Only known for the local router when inserted via face-aware APIs.
 	NextHops []PrefixNextHop
+}
+
+type PrefixSnapshotEntry struct {
+	Router         enc.Name
+	Name           enc.Name
+	Multicast      bool
+	ValidityPeriod *spec.ValidityPeriod
+	NextHops       []PrefixNextHop
 }
 
 type ExpiredPrefix struct {
@@ -84,22 +92,10 @@ func (pt *PrefixEgreState) Reset() {
 	pt.publish(op.Encode())
 }
 
-func (pt *PrefixEgreState) Announce(name enc.Name, face uint64, cost uint64) {
-	pt.AnnounceWithValidity(name, face, cost, nil)
-}
-
-// AnnounceWithValidity updates or creates a local prefix with an optional validity period.
-func (pt *PrefixEgreState) AnnounceWithValidity(name enc.Name, face uint64, cost uint64, validity *spec.ValidityPeriod) {
-	log.Info(pt, "Local announce", "name", name, "face", face, "cost", cost)
+// Announce updates or creates a local prefix with an optional validity period.
+// Use face=0 and cost=0 for route-only semantics.
+func (pt *PrefixEgreState) Announce(name enc.Name, face uint64, cost uint64, validity *spec.ValidityPeriod) {
 	hash := name.TlvStr()
-
-	// Create nexthop to store
-	nexthop := PrefixNextHop{
-		Face: face,
-		Cost: cost,
-	}
-
-	// Check if matching entry already exists
 	entry := pt.me.Prefixes[hash]
 	publishAdd := false
 	if entry == nil {
@@ -111,28 +107,32 @@ func (pt *PrefixEgreState) AnnounceWithValidity(name enc.Name, face uint64, cost
 	}
 
 	if !sameValidityPeriod(entry.ValidityPeriod, validity) {
-		if validity == nil {
-			entry.ValidityPeriod = nil
-		} else {
-			entry.ValidityPeriod = &spec.ValidityPeriod{
-				NotBefore: validity.NotBefore,
-				NotAfter:  validity.NotAfter,
-			}
-		}
+		entry.ValidityPeriod = cloneValidityPeriod(validity)
 		publishAdd = true
 	}
 
-	// Update entry with nexthop cost
-	found := false
-	for i, nh := range entry.NextHops {
-		if nh.Face == face {
-			found = true
-			entry.NextHops[i] = nexthop
-			break
+	if face == 0 && cost == 0 {
+		log.Info(pt, "Local announce", "name", name)
+		// Route-only announcements should not retain local face/cost state.
+		entry.NextHops = nil
+	} else {
+		log.Info(pt, "Local announce", "name", name, "face", face, "cost", cost)
+		nexthop := PrefixNextHop{
+			Face: face,
+			Cost: cost,
 		}
-	}
-	if !found {
-		entry.NextHops = append(entry.NextHops, nexthop)
+
+		found := false
+		for i, nh := range entry.NextHops {
+			if nh.Face == face {
+				found = true
+				entry.NextHops[i] = nexthop
+				break
+			}
+		}
+		if !found {
+			entry.NextHops = append(entry.NextHops, nexthop)
+		}
 	}
 
 	if publishAdd {
@@ -142,6 +142,20 @@ func (pt *PrefixEgreState) AnnounceWithValidity(name enc.Name, face uint64, cost
 
 // Withdraw removes a local next hop and removes the prefix when no next hops remain.
 func (pt *PrefixEgreState) Withdraw(name enc.Name, face uint64) {
+	if face == 0 {
+		log.Info(pt, "Local withdraw", "name", name)
+		hash := name.TlvStr()
+
+		entry := pt.me.Prefixes[hash]
+		if entry == nil {
+			return
+		}
+
+		pt.publishRemoveEntry(entry)
+		delete(pt.me.Prefixes, hash)
+		return
+	}
+
 	log.Info(pt, "Local withdraw", "name", name, "face", face)
 	hash := name.TlvStr()
 
@@ -252,6 +266,34 @@ func (pt *PrefixEgreState) Snap() enc.Wire {
 	}
 
 	return snap.Encode()
+}
+
+// SnapshotEntries returns a point-in-time copy of all known prefix entries.
+func (pt *PrefixEgreState) SnapshotEntries() []PrefixSnapshotEntry {
+	entries := make([]PrefixSnapshotEntry, 0)
+	for _, router := range pt.routers {
+		for _, entry := range router.Prefixes {
+			nextHops := make([]PrefixNextHop, len(entry.NextHops))
+			copy(nextHops, entry.NextHops)
+			entries = append(entries, PrefixSnapshotEntry{
+				Router:         router.Name.Clone(),
+				Name:           entry.Name.Clone(),
+				Multicast:      entry.Multicast,
+				ValidityPeriod: cloneValidityPeriod(entry.ValidityPeriod),
+				NextHops:       nextHops,
+			})
+		}
+	}
+	return entries
+}
+
+// EntryCount returns total prefix entries across all known routers in PES.
+func (pt *PrefixEgreState) EntryCount() int {
+	count := 0
+	for _, router := range pt.routers {
+		count += len(router.Prefixes)
+	}
+	return count
 }
 
 // IsValidAt returns true if the prefix is currently within its validity window.
