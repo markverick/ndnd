@@ -325,7 +325,8 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	}
 
 	routerName, routerNameSet := CfgRouterName()
-	nextLocal, nextNet := twoPhaseLookup(lookupName, packet.EgressRouter, routerName, routerNameSet)
+
+	nextLocal, nextNet, nextER := t.twoPhaseLookup(lookupName, packet.EgressRouter, routerName, routerNameSet)
 	// Query the FIB for all possible nexthops
 	// nexthops := table.FibStrategyTable.FindNextHopsEnc(lookupName)
 
@@ -349,7 +350,9 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 
 	// Filter network FIB nexthops.
 	allowedNetNexthops := make([]*table.FibNextHopEntry, 0, len(nextNet))
-	for _, nexthop := range nextNet {
+	allowedNetER := make([]enc.Name, 0, len(nextER))
+	// core.Log.Info(t, "Comparing sizes", "nextNet", len(nextNet), "nextER", len(nextER))
+	for i, nexthop := range nextNet {
 		// Exclude incoming face
 		if nexthop.Nexthop == packet.IncomingFaceID {
 			continue
@@ -366,6 +369,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 		// TODO: unclear where NFD dev guide specifies such behavior (if any)
 		if pitEntry.InRecords()[nexthop.Nexthop] == nil {
 			allowedNetNexthops = append(allowedNetNexthops, nexthop)
+			allowedNetER = append(allowedNetER, nextER[i])
 		}
 	}
 
@@ -380,42 +384,54 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 
 	if len(allowedNetNexthops) > 0 {
 		// Pass to strategy AfterReceiveInterest pipeline
-		strategy.AfterReceiveInterest(packet, pitEntry, incomingFace.FaceID(), allowedNetNexthops)
+		strategy.AfterReceiveInterest(packet, pitEntry, incomingFace.FaceID(), allowedNetNexthops, allowedNetER)
 	} else {
 		// NACK?
 	}
 }
 
-func twoPhaseLookup(lookupName enc.Name, egressRouter enc.Name, routerName enc.Name, routerNameSet bool) (
-	nextLocal []*table.PetNextHop, nextNet []*table.FibNextHopEntry,
+func (t *Thread) twoPhaseLookup(lookupName enc.Name, egressRouter enc.Name, routerName enc.Name, routerNameSet bool) (
+	nextLocal []*table.PetNextHop,
+	nextNet []*table.FibNextHopEntry,
+	nextER []enc.Name,
 ) {
 	// If EgressRouter is set and matches this router, forward to local app faces via PET.
 	if len(egressRouter) > 0 {
+		core.Log.Info(t, "egress-router tag set", "egressRouter", egressRouter, "routerName", routerName)
 		if routerNameSet && egressRouter.Equal(routerName) {
 			petEntry, petFound := table.Pet.FindLongestPrefixEnc(lookupName)
 			if petFound {
+				core.Log.Info(t, "egress-router local forwarding (pet found)", "egressRouter", egressRouter, "routerName", routerName)
 				for i := range petEntry.NextHops {
 					nextLocal = append(nextLocal, &petEntry.NextHops[i])
 				}
 			}
+			return nextLocal, nextNet, nextER
 		} else {
-			nextNet = append(nextNet, table.FibStrategyTable.FindNextHopsEnc(egressRouter)...)
+			// for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(egressRouter) {
+			// 	nextNet = append(nextNet, nextHop)
+			// 	nextER = append(nextER, egressRouter)
+			// }
+			core.Log.Info(t, "egress-router network forwarding", "lookupName", lookupName, "egressRouter", egressRouter, "routerName", routerName)
+			// return nextLocal, nextNet, nextER
 		}
-		return nextLocal, nextNet
 	}
 
 	// No EgressRouter: try local PET first, then map PET egress routers to network next hops.
 	petEntry, petFound := table.Pet.FindLongestPrefixEnc(lookupName)
 	if !petFound {
-		return nextLocal, nextNet
+		return nextLocal, nextNet, nextER
 	}
 	for i := range petEntry.NextHops {
 		nextLocal = append(nextLocal, &petEntry.NextHops[i])
 	}
 	for _, er := range petEntry.EgressRouters {
-		nextNet = append(nextNet, table.FibStrategyTable.FindNextHopsEnc(er)...)
+		for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(er) {
+			nextNet = append(nextNet, nextHop)
+			nextER = append(nextER, er)
+		}
 	}
-	return nextLocal, nextNet
+	return nextLocal, nextNet, nextER
 }
 
 // (AI GENERATED DESCRIPTION): Forwards an Interest packet to the chosen outgoing face, updating the PIT entry’s out‑record, generating a PIT token, and enforcing HopLimit and anti‑loop rules before transmitting it.

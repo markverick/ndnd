@@ -13,6 +13,7 @@ import (
 	"github.com/named-data/ndnd/fw/core"
 	"github.com/named-data/ndnd/fw/defn"
 	"github.com/named-data/ndnd/fw/table"
+	enc "github.com/named-data/ndnd/std/encoding"
 )
 
 // MulticastSuppressionTime is the time to suppress retransmissions of the same Interest.
@@ -63,6 +64,7 @@ func (s *Multicast) AfterReceiveInterest(
 	pitEntry table.PitEntry,
 	inFace uint64,
 	nexthops []*table.FibNextHopEntry,
+	nextER []enc.Name,
 ) {
 	if len(nexthops) == 0 {
 		core.Log.Debug(s, "No nexthop for Interest", "name", packet.Name)

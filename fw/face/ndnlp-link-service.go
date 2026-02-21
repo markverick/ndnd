@@ -256,6 +256,13 @@ func sendPacket(l *NDNLPLinkService, out dispatch.OutPkt) {
 			fragment.CongestionMark = congestionMark
 		}
 
+		// Set the Egress Router on fragment
+		if len(out.Pkt.EgressRouter) > 0 {
+			fragment.EgressRouter = &defn.FwEgressRouter{Name: out.Pkt.EgressRouter}
+		} else {
+			fragment.EgressRouter = nil
+		}
+
 		// Encode final LP frame
 		pkt := defn.FwPacket{LpPacket: fragment}
 		frameWire := pkt.Encode()
