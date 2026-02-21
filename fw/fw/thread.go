@@ -351,7 +351,6 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	// Filter network FIB nexthops.
 	allowedNetNexthops := make([]*table.FibNextHopEntry, 0, len(nextNet))
 	allowedNetER := make([]enc.Name, 0, len(nextER))
-	// core.Log.Info(t, "Comparing sizes", "nextNet", len(nextNet), "nextER", len(nextER))
 	for i, nexthop := range nextNet {
 		// Exclude incoming face
 		if nexthop.Nexthop == packet.IncomingFaceID {
@@ -397,7 +396,6 @@ func (t *Thread) twoPhaseLookup(lookupName enc.Name, egressRouter enc.Name, rout
 ) {
 	// If EgressRouter is set and matches this router, forward to local app faces via PET.
 	if len(egressRouter) > 0 {
-		core.Log.Info(t, "egress-router tag set", "egressRouter", egressRouter, "routerName", routerName)
 		if routerNameSet && egressRouter.Equal(routerName) {
 			petEntry, petFound := table.Pet.FindLongestPrefixEnc(lookupName)
 			if petFound {

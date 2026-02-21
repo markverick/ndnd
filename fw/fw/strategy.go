@@ -34,7 +34,7 @@ type Strategy interface {
 		pitEntry table.PitEntry,
 		inFace uint64,
 		nexthops []*table.FibNextHopEntry,
-	  nextER []enc.Name)
+		nextER []enc.Name)
 	BeforeSatisfyInterest(
 		pitEntry table.PitEntry,
 		inFace uint64)

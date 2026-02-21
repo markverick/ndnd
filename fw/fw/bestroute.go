@@ -97,11 +97,10 @@ func (s *BestRoute) AfterReceiveInterest(
 			// But then we need to resort the list - this is just faster for now.
 			// In densely connected networks, this is not a big deal.
 
-			core.Log.Info(s, "Forwarding Interest", "name", packet.Name, "faceid", nh.Nexthop)
+			core.Log.Trace(s, "Forwarding Interest", "name", packet.Name, "faceid", nh.Nexthop)
 
 			// if there is an associated EgressRouter tag with this new route, then set packet.EgressRouter to the tag
 			if i < len(nextER) {
-				core.Log.Info(s, "Adding ER tag", "name", packet.Name, "faceid", nh.Nexthop, "oldEgressRouter", packet.EgressRouter)
 				oldEgress := packet.EgressRouter
 				packet.EgressRouter = nextER[i]
 				if sent := s.SendInterest(packet, pitEntry, nh.Nexthop, inFace); sent {
