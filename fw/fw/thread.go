@@ -401,19 +401,17 @@ func (t *Thread) twoPhaseLookup(lookupName enc.Name, egressRouter enc.Name, rout
 		if routerNameSet && egressRouter.Equal(routerName) {
 			petEntry, petFound := table.Pet.FindLongestPrefixEnc(lookupName)
 			if petFound {
-				core.Log.Info(t, "egress-router local forwarding (pet found)", "egressRouter", egressRouter, "routerName", routerName)
 				for i := range petEntry.NextHops {
 					nextLocal = append(nextLocal, &petEntry.NextHops[i])
 				}
 			}
 			return nextLocal, nextNet, nextER
 		} else {
-			// for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(egressRouter) {
-			// 	nextNet = append(nextNet, nextHop)
-			// 	nextER = append(nextER, egressRouter)
-			// }
-			core.Log.Info(t, "egress-router network forwarding", "lookupName", lookupName, "egressRouter", egressRouter, "routerName", routerName)
-			// return nextLocal, nextNet, nextER
+			for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(egressRouter) {
+				nextNet = append(nextNet, nextHop)
+				nextER = append(nextER, egressRouter)
+			}
+			return nextLocal, nextNet, nextER
 		}
 	}
 
