@@ -277,6 +277,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 					table.UpdateExpirationTimer(pitEntry, time.Now())
 
 					// Create the pending packet structure
+					packet.EgressRouter = nil
 					packet.L3.Data = csData
 					packet.L3.Interest = nil
 					packet.Raw = enc.Wire{csWire}
@@ -373,9 +374,9 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	}
 
 	// If both local and network choices exist, avoid allow both local and network egress
-	if len(allowedLocalNexthops) > 0 &&
-		(len(allowedNetNexthops) == 0 || incomingFace.Scope() != defn.Local) {
+	if len(allowedLocalNexthops) > 0 {
 		core.Log.Trace(t, "Local Egress captures the Interest", "name", packet.Name)
+		packet.EgressRouter = nil
 		// TODO: we should have micro strategy in PET to dispatch Interest, forget for now
 		t.processOutgoingInterest(packet, pitEntry, allowedLocalNexthops[0].FaceID, incomingFace.FaceID())
 		return

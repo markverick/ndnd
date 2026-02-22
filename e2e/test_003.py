@@ -1,5 +1,6 @@
 import os
 import random
+import re
 import time
 
 from mininet.log import info
@@ -10,73 +11,129 @@ from fw import NDNd_FW
 import dv_util
 
 
-def _pick_producer_gateway(nodes):
-    links = []
+def _build_neighbors(nodes):
+    neighbors = {node: {} for node in nodes}
     for node in nodes:
         for intf in node.intfList():
             if intf.link is None:
                 continue
             other_intf = intf.link.intf2 if intf.link.intf1 == intf else intf.link.intf1
-            links.append((node, other_intf.node, other_intf.IP()))
-    if not links:
+            neighbors[node][other_intf.node] = other_intf.IP()
+    return neighbors
+
+
+def _is_connected(nodes, neighbors):
+    if len(nodes) <= 1:
+        return True
+    remaining = set(nodes)
+    start = nodes[0]
+    stack = [start]
+    seen = {start}
+    while stack:
+        cur = stack.pop()
+        for nxt in neighbors.get(cur, {}):
+            if nxt in remaining and nxt not in seen:
+                seen.add(nxt)
+                stack.append(nxt)
+    return len(seen) == len(remaining)
+
+
+def _pick_producer_router(nodes):
+    neighbors = _build_neighbors(nodes)
+    if not any(neighbors.values()):
         raise Exception("No linked nodes found in topology")
-    return random.choice(links)
+
+    # Prefer a dedicated leaf client attached to a router.
+    leaf_candidates = []
+    fallback_candidates = []
+    for producer, peer_map in neighbors.items():
+        if not peer_map:
+            continue
+        peers = list(peer_map.items())
+        for router, router_ip in peers:
+            routers = [n for n in nodes if n != producer]
+            if not _is_connected(routers, neighbors):
+                continue
+            fallback_candidates.append((producer, router, router_ip))
+            if len(peer_map) == 1:
+                leaf_candidates.append((producer, router, router_ip))
+
+    if leaf_candidates:
+        return random.choice(leaf_candidates)
+    if fallback_candidates:
+        return random.choice(fallback_candidates)
+
+    raise Exception("No producer/router pair keeps router set connected")
 
 
-def _run_cmd_or_fail(node, cmd, what):
-    out = node.cmd(cmd)
-    if "Status=200" in out or out.strip() == "":
-        return out
-    raise Exception(f"{what} failed on {node.name}\ncmd: {cmd}\nout:\n{out}")
+def _assert_no_local_dv(node):
+    pet = node.cmd("ndnd fw pet-list")
+    if re.search(r"^\s*/localhost/dv\b", pet, re.MULTILINE):
+        raise Exception(
+            f"Producer {node.name} must not run local DV in stub-mode test.\n"
+            f"PET unexpectedly contains /localhost/dv:\n{pet}\n"
+        )
 
 
-def _configure_gateway_path(producer, gateway_ip):
-    insert_prefix = "/localhop/route/insert"
-    default_gateway = "/localhop/default"
-    gateway_face = f"udp4://{gateway_ip}:6363"
+def _wait_for_default_router_pet(node, router_face, deadline=120):
+    info(f"Waiting for default PET route on {node.name} to {router_face}\n")
+    face_pat = re.compile(rf"faceid=(\d+) remote={re.escape(router_face)}(?:\s|$)")
+    start = time.time()
+    while time.time() - start < deadline:
+        face_out = node.cmd("ndnd fw face-list")
+        face_match = face_pat.search(face_out)
+        if face_match:
+            faceid = face_match.group(1)
+            pet_out = node.cmd("ndnd fw pet-list")
+            root_pat = re.compile(rf"^\s*/\s+egress=.*nexthops=\{{[^}}]*faceid={faceid}\b", re.MULTILINE)
+            if root_pat.search(pet_out):
+                info(f"Default PET route visible on {node.name} via faceid={faceid}\n")
+                return
+        time.sleep(1)
 
-    _run_cmd_or_fail(
-        producer,
-        f"ndnd fw pet-add-egress prefix={insert_prefix} egress={default_gateway}",
-        "configure PET egress for prefix insertion",
+    raise Exception(
+        f"Default PET route '/' not installed on {node.name} for router {router_face}\n"
+        f"face-list:\n{node.cmd('ndnd fw face-list')}\n"
+        f"pet-list:\n{node.cmd('ndnd fw pet-list')}\n"
     )
-    _run_cmd_or_fail(
-        producer,
-        f"ndnd fw route-add prefix={default_gateway} face={gateway_face}",
-        "configure route to gateway for prefix insertion",
-    )
 
 
-def _wait_for_gateway_insertion(node, prefix, deadline=120):
-    info(f"Waiting for gateway insertion on {node.name} for {prefix}\n")
+def _wait_for_prefix_insertion(node, prefix, deadline=120):
+    info(f"Waiting for router insertion on {node.name} for {prefix}\n")
     start = time.time()
     while time.time() - start < deadline:
         out = node.cmd("ndnd dv prefix-list")
         if f"prefix={prefix} " in out:
-            info(f"Gateway insertion visible on {node.name}\n")
+            info(f"Router insertion visible on {node.name}\n")
             return
         time.sleep(1)
-    raise Exception(f"Gateway insertion did not appear on {node.name} for {prefix}")
+    raise Exception(f"Router insertion did not appear on {node.name} for {prefix}")
 
 
 def scenario(ndn: Minindn, network="/minindn"):
     """
-    Validate gateway-mode prefix insertion end-to-end.
+    Validate stub-mode prefix insertion end-to-end.
     Security model:
     - DV routers run with trust anchors and signed router certs (dv_util.setup).
-    - Exposing client sends signed prefix-insertion interests in gateway mode.
+    - Exposing client sends signed prefix-insertion interests in stub mode.
     """
 
     info("Starting forwarder on nodes\n")
     AppManager(ndn, ndn.net.hosts, NDNd_FW)
 
-    dv_util.setup(ndn, network=network)
-    dv_util.converge(ndn.net.hosts, network=network)
+    producer, router, router_ip = _pick_producer_router(ndn.net.hosts)
+    routers = [n for n in ndn.net.hosts if n != producer]
+    if not routers:
+        raise Exception("Need at least one router node distinct from producer")
 
-    producer, gateway, gateway_ip = _pick_producer_gateway(ndn.net.hosts)
-    consumer_candidates = [n for n in ndn.net.hosts if n != producer and n != gateway]
+    # Producer is a stub client only; only router nodes run DV.
+    dv_util.setup(ndn, network=network, nodes=routers)
+    dv_util.converge(routers, network=network)
+    _assert_no_local_dv(producer)
+
+    consumer_candidates = [n for n in routers if n != router]
     if not consumer_candidates:
-        consumer_candidates = [n for n in ndn.net.hosts if n != producer]
+        consumer_candidates = [n for n in routers]
     if not consumer_candidates:
         raise Exception("Need at least two nodes for prefix insertion E2E test")
     consumer = random.choice(consumer_candidates)
@@ -87,17 +144,19 @@ def scenario(ndn: Minindn, network="/minindn"):
     put_log = f"/tmp/prefix-insertion-{producer.name}.put.log"
 
     os.system(f"dd if=/dev/urandom of={test_file} bs=64K count=1 status=none")
-    _configure_gateway_path(producer, gateway_ip)
+    router_face = f"udp4://{router_ip}:6363"
 
     cmd = (
-        f"NDN_CLIENT_ROUTING_MODE=gateway "
+        f"NDN_CLIENT_ROUTING_MODE=stub "
+        f"NDN_CLIENT_ROUTER_URI={router_face} "
         f"ndnd put --expose \"{prefix}\" < {test_file} > {put_log} 2>&1 &"
     )
     info(f"{producer.name} {cmd}\n")
     producer.cmd(cmd)
 
-    _wait_for_gateway_insertion(gateway, prefix)
-    dv_util.wait_prefix_pet_ready({consumer: {prefix}, gateway: {prefix}}, deadline=180)
+    _wait_for_default_router_pet(producer, router_face)
+    _wait_for_prefix_insertion(router, prefix)
+    dv_util.wait_prefix_pet_ready({consumer: {prefix}, router: {prefix}}, deadline=180)
 
     cat_cmd = f'ndnd cat "{prefix}" > {recv_file} 2> /tmp/prefix-insertion-cat.log'
     info(f"{consumer.name} {cat_cmd}\n")

@@ -93,12 +93,12 @@ func (c *Client) announcePrefix_(args ndn.Announcement) {
 	}
 
 	if err := c.insertPrefix(args, false); err != nil {
-		log.Warn(c, "Failed to expose prefix through gateway insertion", "name", args.Name, "err", err)
+		log.Warn(c, "Failed to expose prefix to router through prefix insertion", "name", args.Name, "err", err)
 		if args.OnError != nil {
 			args.OnError(err)
 		}
 	} else {
-		log.Info(c, "Exposed prefix through gateway insertion", "name", args.Name)
+		log.Info(c, "Exposed prefix to router through prefix insertion", "name", args.Name)
 	}
 }
 
@@ -155,18 +155,21 @@ func (c *Client) withdrawPrefix_(args ndn.Announcement, onError func(error)) {
 	}
 
 	if err := c.insertPrefix(args, true); err != nil {
-		log.Warn(c, "Failed to withdraw prefix through gateway insertion", "name", args.Name, "err", err)
+		log.Warn(c, "Failed to withdraw prefix through router insertion", "name", args.Name, "err", err)
 		if onError != nil {
 			onError(err)
 		}
 	} else {
-		log.Info(c, "Withdrew prefix through gateway insertion", "name", args.Name)
+		log.Info(c, "Withdrew prefix through router insertion", "name", args.Name)
 	}
 }
 
 // (AI GENERATED DESCRIPTION): Re‑issues all stored announcements asynchronously when the Face comes up, stopping the iteration if the Face ever stops running.
 func (c *Client) onFaceUp() {
 	go func() {
+		if err := c.setupDefaultRoute(); err != nil {
+			log.Warn(c, "Failed to configure default router route on face-up", "err", err)
+		}
 		c.announcements.Range(func(key, value any) bool {
 			c.announcePrefix_(value.(ndn.Announcement))
 			return c.engine.Face().IsRunning()

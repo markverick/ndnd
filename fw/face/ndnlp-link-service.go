@@ -257,7 +257,7 @@ func sendPacket(l *NDNLPLinkService, out dispatch.OutPkt) {
 		}
 
 		// Set the Egress Router on fragment
-		if len(out.Pkt.EgressRouter) > 0 {
+		if pkt.L3.Interest != nil && len(out.Pkt.EgressRouter) > 0 {
 			fragment.EgressRouter = &defn.FwEgressRouter{Name: out.Pkt.EgressRouter}
 		} else {
 			fragment.EgressRouter = nil

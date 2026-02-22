@@ -13,6 +13,7 @@ wasm_exec.js
 .idea
 .gocache
 .toolchains/
+.bin/
 
 # Temporary
 .env

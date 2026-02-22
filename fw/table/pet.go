@@ -162,7 +162,7 @@ func (p *PrefixEgressTable) getOrCreateEntry(node *petNode, name enc.Name) *petE
 
 // AddEgressEnc adds an egress router for the specified prefix.
 func (p *PrefixEgressTable) AddEgressEnc(prefix enc.Name, egress enc.Name) {
-	if len(prefix) == 0 || len(egress) == 0 {
+	if len(egress) == 0 {
 		return
 	}
 
@@ -176,7 +176,7 @@ func (p *PrefixEgressTable) AddEgressEnc(prefix enc.Name, egress enc.Name) {
 
 // RemoveEgressEnc removes an egress router from the specified prefix.
 func (p *PrefixEgressTable) RemoveEgressEnc(prefix enc.Name, egress enc.Name) {
-	if len(prefix) == 0 || len(egress) == 0 {
+	if len(egress) == 0 {
 		return
 	}
 
@@ -197,10 +197,6 @@ func (p *PrefixEgressTable) RemoveEgressEnc(prefix enc.Name, egress enc.Name) {
 
 // AddNextHopEnc adds or updates a nexthop for the specified prefix.
 func (p *PrefixEgressTable) AddNextHopEnc(prefix enc.Name, faceID uint64, cost uint64) {
-	if len(prefix) == 0 {
-		return
-	}
-
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
@@ -211,10 +207,6 @@ func (p *PrefixEgressTable) AddNextHopEnc(prefix enc.Name, faceID uint64, cost u
 
 // RemoveNextHopEnc removes a nexthop for the specified prefix.
 func (p *PrefixEgressTable) RemoveNextHopEnc(prefix enc.Name, faceID uint64) {
-	if len(prefix) == 0 {
-		return
-	}
-
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 

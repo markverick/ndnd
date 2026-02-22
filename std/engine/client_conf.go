@@ -11,14 +11,16 @@ type ClientRoutingMode uint8
 
 const (
 	ClientRoutingModeLocal ClientRoutingMode = iota
-	ClientRoutingModeGateway
+	ClientRoutingModeStub
 )
 
 type ClientConfig struct {
 	TransportUri string
 
-	// Prefix expose routing mode: local (default) or gateway.
+	// Prefix expose routing mode: local (default) or stub.
 	RoutingMode ClientRoutingMode
+	// Upstream router face URI used when routing_mode=stub (optional).
+	RouterUri string
 }
 
 // (AI GENERATED DESCRIPTION): Retrieves the NDN client configuration, starting with a default transport URI and overriding it with values from `client.conf` files in prioritized directories and the `NDN_CLIENT_TRANSPORT` environment variable.
@@ -31,6 +33,7 @@ func GetClientConfig() ClientConfig {
 	config := ClientConfig{
 		TransportUri: transportUri,
 		RoutingMode:  ClientRoutingModeLocal,
+		RouterUri:    "",
 	}
 
 	// Order of increasing priority
@@ -69,11 +72,13 @@ func GetClientConfig() ClientConfig {
 				config.TransportUri = val
 			case "routing_mode":
 				switch strings.ToLower(strings.TrimSpace(val)) {
-				case "gateway":
-					config.RoutingMode = ClientRoutingModeGateway
+				case "stub":
+					config.RoutingMode = ClientRoutingModeStub
 				default:
 					config.RoutingMode = ClientRoutingModeLocal
 				}
+			case "router_uri":
+				config.RouterUri = val
 			}
 		}
 	}
@@ -85,11 +90,14 @@ func GetClientConfig() ClientConfig {
 	}
 	if routingModeEnv := os.Getenv("NDN_CLIENT_ROUTING_MODE"); routingModeEnv != "" {
 		switch strings.ToLower(strings.TrimSpace(routingModeEnv)) {
-		case "gateway":
-			config.RoutingMode = ClientRoutingModeGateway
+		case "stub":
+			config.RoutingMode = ClientRoutingModeStub
 		default:
 			config.RoutingMode = ClientRoutingModeLocal
 		}
+	}
+	if routerEnv := os.Getenv("NDN_CLIENT_ROUTER_URI"); routerEnv != "" {
+		config.RouterUri = routerEnv
 	}
 
 	return config

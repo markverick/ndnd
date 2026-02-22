@@ -8,12 +8,14 @@ from minindn.apps.app_manager import AppManager
 
 from dv import NDNd_DV, DEFAULT_NETWORK
 
-def setup(ndn: Minindn, network=DEFAULT_NETWORK, **dv_kwargs) -> None:
+def setup(ndn: Minindn, network=DEFAULT_NETWORK, nodes=None, **dv_kwargs) -> None:
     time.sleep(1) # wait for fw to start
 
     NDNd_DV.init_trust(network=network)
     info('Starting ndn-dv on nodes\n')
-    AppManager(ndn, ndn.net.hosts, NDNd_DV, network=network, **dv_kwargs)
+    if nodes is None:
+        nodes = ndn.net.hosts
+    AppManager(ndn, nodes, NDNd_DV, network=network, **dv_kwargs)
 
 def converge(nodes: list[Node], deadline=120, network=DEFAULT_NETWORK, use_nfdc=False) -> int:
     info('Waiting for routing to converge\n')

@@ -14,15 +14,15 @@ import (
 )
 
 const (
-	exposeLifetime            = 1 * time.Hour
-	commandTimeout            = 1 * time.Second
-	defaultGatewayInsertRoute = "/localhop/route/insert"
+	exposeLifetime           = 1 * time.Hour
+	commandTimeout           = 1 * time.Second
+	defaultRouterInsertRoute = "/localhop/route/insert"
 )
 
 func (c *Client) insertPrefix(args ndn.Announcement, withdraw bool) error {
-	insertPrefix, err := enc.NameFromStr(defaultGatewayInsertRoute)
+	insertPrefix, err := enc.NameFromStr(defaultRouterInsertRoute)
 	if err != nil {
-		return fmt.Errorf("invalid gateway insert route %q: %w", defaultGatewayInsertRoute, err)
+		return fmt.Errorf("invalid router insert route %q: %w", defaultRouterInsertRoute, err)
 	}
 
 	appParam, err := c.prefixInsertionAppParam(args, withdraw)

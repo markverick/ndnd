@@ -44,7 +44,7 @@ This tool expects data from the standard input.`,
 		Run:     pc.run,
 	}
 
-	cmd.Flags().BoolVar(&pc.expose, "expose", false, "Expose prefix through routing (DV or gateway insertion)")
+	cmd.Flags().BoolVar(&pc.expose, "expose", false, "Expose prefix through routing")
 	return cmd
 }
 

@@ -15,7 +15,7 @@ def scenario(ndn: Minindn, network='/minindn'):
     """
 
     info('Starting forwarder on nodes\n')
-    AppManager(ndn, ndn.net.hosts, NDNd_FW)
+    AppManager(ndn, ndn.net.hosts, NDNd_FW, network=network)
 
     dv_util.setup(ndn, network=network)
     dv_util.converge(ndn.net.hosts, network=network)

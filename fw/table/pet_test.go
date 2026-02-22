@@ -73,3 +73,32 @@ func TestPetCleanUpFaceKeepsEntryWhenEgressExists(t *testing.T) {
 		t.Fatalf("unexpected egress routers: %+v", entry.EgressRouters)
 	}
 }
+
+func TestPetRootPrefixDefaultNextHop(t *testing.T) {
+	pet := newTestPet()
+	root := testName(t, "/")
+	name := testName(t, "/example/root-default")
+
+	pet.AddNextHopEnc(root, 77, 0)
+
+	entry, ok := pet.FindExactEnc(root)
+	if !ok {
+		t.Fatalf("root PET entry missing")
+	}
+	if len(entry.NextHops) != 1 || entry.NextHops[0].FaceID != 77 {
+		t.Fatalf("unexpected root nexthops: %+v", entry.NextHops)
+	}
+
+	longest, ok := pet.FindLongestPrefixEnc(name)
+	if !ok {
+		t.Fatalf("longest prefix lookup should return root entry")
+	}
+	if len(longest.NextHops) != 1 || longest.NextHops[0].FaceID != 77 {
+		t.Fatalf("unexpected longest-prefix nexthops: %+v", longest.NextHops)
+	}
+
+	pet.RemoveNextHopEnc(root, 77)
+	if _, ok := pet.FindExactEnc(root); ok {
+		t.Fatalf("root PET entry should be removed after deleting last nexthop")
+	}
+}

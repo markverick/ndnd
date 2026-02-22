@@ -38,7 +38,7 @@ func CmdPingServer() *cobra.Command {
 		Run:     ps.run,
 	}
 
-	cmd.Flags().BoolVar(&ps.expose, "expose", false, "Expose prefix through routing (DV or gateway insertion)")
+	cmd.Flags().BoolVar(&ps.expose, "expose", false, "Expose prefix through routing")
 	return cmd
 }
 
