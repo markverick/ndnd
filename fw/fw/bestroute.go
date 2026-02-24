@@ -107,7 +107,7 @@ func (s *BestRoute) AfterReceiveInterest(
 					return
 				}
 				packet.EgressRouter = oldEgress
-			// otherwise, normal forwarding
+				// otherwise, normal forwarding
 			} else {
 				if sent := s.SendInterest(packet, pitEntry, nh.Nexthop, inFace); sent {
 					return

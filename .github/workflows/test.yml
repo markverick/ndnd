@@ -66,5 +66,10 @@ jobs:
       - name: Mark ndnd as executable
         run: chmod +x /usr/bin/ndnd
 
+      - name: Copy ndnd to e2e's bin folder
+        run: |
+          mkdir .bin/
+          cp /usr/bin/ndnd .bin/
+
       - name: Run e2e tests
         run: make e2e
