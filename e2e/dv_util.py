@@ -6,12 +6,28 @@ from mininet.node import Node
 from minindn.minindn import Minindn
 from minindn.apps.app_manager import AppManager
 
+import dv
 from dv import NDNd_DV, DEFAULT_NETWORK
 
 def setup(ndn: Minindn, network=DEFAULT_NETWORK, nodes=None, **dv_kwargs) -> None:
     time.sleep(1) # wait for fw to start
 
     NDNd_DV.init_trust(network=network)
+    root_anchor = dv.TRUST_ROOT_NAME
+
+    routing_anchors = dv_kwargs.get('routing_trust_anchors')
+    if not routing_anchors or any(a is None or a == '' for a in routing_anchors):
+        dv_kwargs['routing_trust_anchors'] = [root_anchor]
+
+    dv_kwargs.setdefault('routing_trust_schema', dv.ROUTING_LVS_SCHEMA)
+    dv_kwargs.setdefault('prefix_insertion_keychain', 'inherit')
+
+    prefix_anchors = dv_kwargs.get('prefix_insertion_trust_anchors')
+    if not prefix_anchors or any(a is None or a == '' for a in prefix_anchors):
+        dv_kwargs['prefix_insertion_trust_anchors'] = [root_anchor]
+
+    if network == DEFAULT_NETWORK:
+        dv_kwargs.setdefault('prefix_insertion_trust_schema', dv.CLIENT_LVS_SCHEMA)
     info('Starting ndn-dv on nodes\n')
     if nodes is None:
         nodes = ndn.net.hosts

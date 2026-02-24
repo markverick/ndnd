@@ -30,27 +30,15 @@ func (c *Client) insertPrefix(args ndn.Announcement, withdraw bool) error {
 		return err
 	}
 
-	signer := c.SuggestSigner(insertPrefix)
-	if signer == nil {
-		// Some schemas only define rules for the PrefixAnnouncement object
-		// namespace, not for /localhop/route/insert command interests.
-		signer = c.SuggestSigner(args.Name.Append(enc.NewKeywordComponent("PA")))
-		if signer == nil {
-			return fmt.Errorf("no signer found for prefix insertion command: %s", insertPrefix)
-		}
-	}
-
 	interest, err := c.engine.Spec().MakeInterest(
 		insertPrefix,
 		&ndn.InterestConfig{
 			Lifetime:    optional.Some(commandTimeout),
 			Nonce:       utils.ConvertNonce(c.engine.Timer().Nonce()),
 			MustBeFresh: true,
-			SigNonce:    c.engine.Timer().Nonce(),
-			SigTime:     optional.Some(time.Duration(c.engine.Timer().Now().UnixMilli()) * time.Millisecond),
 		},
 		enc.Wire{appParam},
-		signer,
+		nil, // outer Interest stays unsigned; security is on the signed encapsulated PA Data.
 	)
 	if err != nil {
 		return err

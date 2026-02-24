@@ -2,8 +2,6 @@ package dv
 
 import (
 	"fmt"
-	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -79,9 +77,14 @@ func NewRouter(config *config.Config, engine ndn.Engine) (*Router, error) {
 		if err != nil {
 			return nil, err
 		}
-		schema, err := trust_schema.NewLvsSchema(config.SchemaBytes())
-		if err != nil {
-			return nil, err
+		var schema ndn.TrustSchema
+		if schemaBytes := config.SchemaBytes(); len(schemaBytes) > 0 {
+			schema, err = trust_schema.NewLvsSchema(schemaBytes)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			schema = trust_schema.NewNullSchema()
 		}
 		anchors := config.TrustAnchorNames()
 		trust, err = sec.NewTrustConfig(kc, schema, anchors)
@@ -93,36 +96,29 @@ func NewRouter(config *config.Config, engine ndn.Engine) (*Router, error) {
 		trust.UseDataNameFwHint = true
 	}
 
-	// Create prefix insertion trust configuration.
-	var insertionTrust *sec.TrustConfig = nil
-	switch strings.TrimSpace(config.PrefixInsertionSchemaPath) {
-	case "", "insecure":
-		log.Warn(nil, "Prefix insertion security is disabled - insecure mode")
-	case "deny":
-		log.Warn(nil, "Prefix insertion handler is disabled")
-	default:
-		insertionStore := storage.NewMemoryStore()
-		kc, err := keychain.NewKeyChain(config.PrefixInsertionKeychainUri, insertionStore)
-		if err != nil {
-			return nil, fmt.Errorf("failed to open prefix insertion keychain: %w", err)
-		}
-
-		schemaBytes, err := os.ReadFile(config.PrefixInsertionSchemaPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read prefix insertion schema: %w", err)
-		}
-		schema, err := trust_schema.NewLvsSchema(schemaBytes)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse prefix insertion schema: %w", err)
-		}
-
-		anchors := config.PrefixInsertionTrustAnchorNames()
-		insertionTrust, err = sec.NewTrustConfig(kc, schema, anchors)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create prefix insertion trust config: %w", err)
-		}
-		insertionTrust.UseDataNameFwHint = true
+	// Prefix insertion security is enabled via schema configured in dv config.
+	insertionStore := storage.NewMemoryStore()
+	kc, err := keychain.NewKeyChain(config.PrefixInsertionKeychainUri, insertionStore)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open prefix insertion keychain: %w", err)
 	}
+
+	var insertionSchema ndn.TrustSchema
+	if schemaBytes := config.PrefixInsertionSchemaBytes(); len(schemaBytes) > 0 {
+		insertionSchema, err = trust_schema.NewLvsSchema(schemaBytes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse prefix insertion trust schema: %w", err)
+		}
+	} else {
+		insertionSchema = trust_schema.NewNullSchema()
+	}
+
+	anchors := config.PrefixInsertionTrustAnchorNames()
+	insertionTrust, err := sec.NewTrustConfig(kc, insertionSchema, anchors)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create prefix insertion trust config: %w", err)
+	}
+	insertionTrust.UseDataNameFwHint = true
 
 	// Create the DV router
 	dv := &Router{
@@ -270,14 +266,12 @@ func (dv *Router) register() (err error) {
 	}
 
 	insertPrefix := dv.pfx.InsertionPrefix()
-	if dv.pfx.InsertionEnabled() {
-		err = dv.engine.AttachHandler(insertPrefix,
-			func(args ndn.InterestHandlerArgs) {
-				go dv.pfx.OnInsertion(args)
-			})
-		if err != nil {
-			return err
-		}
+	err = dv.engine.AttachHandler(insertPrefix,
+		func(args ndn.InterestHandlerArgs) {
+			go dv.pfx.OnInsertion(args)
+		})
+	if err != nil {
+		return err
 	}
 
 	// Register routes to forwarder
@@ -287,9 +281,7 @@ func (dv *Router) register() (err error) {
 		dv.pfx.SyncPrefix(),
 		dv.pfx.DataPrefix(),
 		dv.config.MgmtPrefix(),
-	}
-	if dv.pfx.InsertionEnabled() {
-		pfxs = append(pfxs, insertPrefix)
+		insertPrefix,
 	}
 
 	for _, prefix := range pfxs {

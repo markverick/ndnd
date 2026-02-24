@@ -57,7 +57,8 @@ def scenario(ndn: Minindn, network='/minindn'):
         deadline=180
     )
 
-    for node in random.sample(ndn.net.hosts, 8):
+    sample_size = min(8, len(ndn.net.hosts))
+    for node in random.sample(ndn.net.hosts, sample_size):
         cmd = f'ndnd cat "{put_prefix}" > recv.bin 2> cat.log'
         info(f'{node.name} {cmd}\n')
         node.cmd(cmd)

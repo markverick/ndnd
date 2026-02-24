@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/named-data/ndnd/dv/config"
@@ -30,6 +31,7 @@ func run(cmd *cobra.Command, args []string) {
 		Config: config.DefaultConfig(),
 	}
 	toolutils.ReadYaml(&config, configfile)
+	config.Config.ConfigDir = filepath.Dir(configfile)
 
 	sigchan := make(chan os.Signal, 1)
 	signal.Notify(sigchan, os.Interrupt, syscall.SIGTERM)

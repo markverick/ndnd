@@ -42,17 +42,6 @@ func (pfx *PrefixModule) onInsertion(args ndn.InterestHandlerArgs) {
 		args.Reply(data.Wire)
 	}
 
-	if !pfx.insertionEnabled {
-		reply(&mgmt.ControlResponse{
-			Val: &mgmt.ControlResponseVal{
-				StatusCode: 403,
-				StatusText: "Prefix insertion handler is disabled",
-				Params:     nil,
-			},
-		})
-		return
-	}
-
 	// If there is no incoming face ID, we can't use this.
 	if !args.IncomingFaceId.IsSet() {
 		log.Warn(pfx, "Received Prefix Insertion with no incoming face ID, ignoring")
@@ -174,16 +163,7 @@ func (pfx *PrefixModule) onPrefixInsertionObject(object ndn.Data, faceId uint64)
 		return resError
 	}
 
-	// Backward compatibility: legacy packets carried ExpirationPeriod (0x6d).
-	// We only preserve ExpirationPeriod=0 as an explicit withdraw signal.
-	legacyExpiration, hasLegacyExpiration, err := parseLegacyExpirationPeriod(piWire)
-	if err != nil {
-		log.Warn(pfx, "Failed to parse legacy expiration period", "err", err)
-		return resError
-	}
-	shouldWithdraw := hasLegacyExpiration && legacyExpiration == 0
-
-	if !shouldWithdraw && params.ValidityPeriod != nil {
+	if params.ValidityPeriod != nil {
 		now := time.Now().UTC()
 		if params.ValidityPeriod.NotBefore != "" {
 			notBefore, err := time.Parse(spec.TimeFmt, params.ValidityPeriod.NotBefore)
@@ -227,20 +207,6 @@ func (pfx *PrefixModule) onPrefixInsertionObject(object ndn.Data, faceId uint64)
 		}
 	}
 
-	if shouldWithdraw {
-		pfx.Withdraw(prefix, faceId)
-		return &mgmt.ControlResponse{
-			Val: &mgmt.ControlResponseVal{
-				StatusCode: 200,
-				StatusText: "Prefix withdrawal command successful",
-				Params: &mgmt.ControlArgs{
-					Name:   prefix,
-					FaceId: optional.Some(faceId),
-				},
-			},
-		}
-	}
-
 	cost := params.Cost.GetOr(0)
 	if cost > config.CostInfinity {
 		log.Warn(pfx, "Invalid Cost value", "Cost", cost)
@@ -260,39 +226,6 @@ func (pfx *PrefixModule) onPrefixInsertionObject(object ndn.Data, faceId uint64)
 			},
 		},
 	}
-}
-
-func parseLegacyExpirationPeriod(piWire enc.Wire) (expiration uint64, has bool, err error) {
-	reader := enc.NewWireView(piWire)
-	for !reader.IsEOF() {
-		typ, err := reader.ReadTLNum()
-		if err != nil {
-			return 0, false, err
-		}
-		l, err := reader.ReadTLNum()
-		if err != nil {
-			return 0, false, err
-		}
-
-		if typ != 0x6d {
-			if err := reader.Skip(int(l)); err != nil {
-				return 0, false, err
-			}
-			continue
-		}
-
-		buf, err := reader.ReadBuf(int(l))
-		if err != nil {
-			return 0, false, err
-		}
-		nat, _, err := enc.ParseNat(buf)
-		if err != nil {
-			return 0, false, err
-		}
-		return uint64(nat), true, nil
-	}
-
-	return 0, false, nil
 }
 
 func (pfx *PrefixModule) validatePrefixAnnouncement(

@@ -13,19 +13,19 @@ from minindn.util import MiniNDNCLI
 import test_001
 import test_002
 import test_003
+import test_004
 
 
 def ensure_local_ndnd() -> None:
     repo_root = Path(__file__).resolve().parent.parent
     local_bin = repo_root / ".bin"
     local_ndnd = local_bin / "ndnd"
-    if not local_ndnd.exists():
-        local_bin.mkdir(parents=True, exist_ok=True)
-        info("Building local ndnd binary for E2E scenarios\n")
-        subprocess.check_call(
-            ["go", "build", "-o", str(local_ndnd), "./cmd/ndnd"],
-            cwd=repo_root,
-        )
+    local_bin.mkdir(parents=True, exist_ok=True)
+    info("Building local ndnd binary for E2E scenarios\n")
+    subprocess.check_call(
+        ["go", "build", "-o", str(local_ndnd), "./cmd/ndnd"],
+        cwd=repo_root,
+    )
     os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
 
 
@@ -65,5 +65,6 @@ if __name__ == '__main__':
     run(test_001.scenario)
     run(test_002.scenario)
     run(test_003.scenario)
+    run(test_004.scenario)
 
     ndn.stop()

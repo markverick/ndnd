@@ -1,10 +1,13 @@
 import json
 import subprocess
 import shutil
+from pathlib import Path
 
 from minindn.apps.application import Application
 
 DEFAULT_NETWORK = '/minindn'
+CLIENT_LVS_SCHEMA = str(Path(__file__).resolve().parent / "client_lvs_minindn.tlv")
+ROUTING_LVS_SCHEMA = str((Path(__file__).resolve().parent.parent / "dv" / "config" / "schema.tlv"))
 
 TRUST_ROOT_NAME: str = None
 TRUST_ROOT_PATH = '/tmp/mn-dv-root'
@@ -17,9 +20,12 @@ class NDNd_DV(Application):
         self,
         node,
         network=DEFAULT_NETWORK,
-        prefix_insertion_schema='insecure',
-        prefix_insertion_keychain='insecure',
+        routing_keychain=None,
+        routing_trust_anchors=None,
+        routing_trust_schema=None,
+        prefix_insertion_keychain='inherit',
         prefix_insertion_trust_anchors=None,
+        prefix_insertion_trust_schema=None,
     ):
         Application.__init__(self, node)
         self.network = network
@@ -33,16 +39,34 @@ class NDNd_DV(Application):
         self.init_keys()
         if prefix_insertion_trust_anchors is None:
             prefix_insertion_trust_anchors = []
+        router_keychain = f'dir://{self.homeDir}/dv-keys'
+        if routing_keychain is None:
+            routing_keychain = router_keychain
+        if routing_trust_anchors is None:
+            routing_trust_anchors = [TRUST_ROOT_NAME]
+        if routing_trust_schema is None:
+            routing_trust_schema = ROUTING_LVS_SCHEMA
+        if routing_trust_schema and not Path(routing_trust_schema).exists():
+            raise Exception(f'Routing trust schema file not found: {routing_trust_schema}')
+        if prefix_insertion_keychain in (None, 'inherit', 'router'):
+            prefix_insertion_keychain = router_keychain
+        if prefix_insertion_trust_schema is None:
+            if network != DEFAULT_NETWORK:
+                raise Exception(
+                    'prefix_insertion_trust_schema must be provided when network != /minindn'
+                )
+            prefix_insertion_trust_schema = CLIENT_LVS_SCHEMA
 
         config = {
             'dv': {
                 'network': network,
                 'router': f"{network}/{node.name}",
-                'keychain': f'dir://{self.homeDir}/dv-keys',
-                'trust_anchors': [TRUST_ROOT_NAME],
-                'prefix_insertion_schema': prefix_insertion_schema,
+                'keychain': routing_keychain,
+                'trust_anchors': routing_trust_anchors,
+                'trust_schema': routing_trust_schema,
                 'prefix_insertion_keychain': prefix_insertion_keychain,
                 'prefix_insertion_trust_anchors': prefix_insertion_trust_anchors,
+                'prefix_insertion_trust_schema': prefix_insertion_trust_schema,
                 'neighbors': list(self.neighbors()),
             }
         }

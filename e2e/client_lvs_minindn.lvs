@@ -1,0 +1,8 @@
+#site: "minindn"
+#KEY: "KEY"/_/_/_
+
+#root: #site/#KEY
+#user: #site/username/#KEY <= #root
+
+#obj: #site/username/_ <= #user
+#packet: #site/username/_/"32=PA" <= #user

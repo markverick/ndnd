@@ -3,7 +3,6 @@ package dv
 import (
 	"fmt"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -29,7 +28,6 @@ type PrefixModule struct {
 	nfdc               *nfdc.NfdMgmtThread
 	client             ndn.Client
 	insertionTrust     *sec.TrustConfig
-	insertionEnabled   bool
 	replicatePes       bool
 	pfxGroup           enc.Name
 	insertPrefix       enc.Name
@@ -102,18 +100,15 @@ func NewPrefixModule(
 		}
 	})
 
-	insertionEnabled := strings.TrimSpace(config.PrefixInsertionSchemaPath) != "deny"
-
 	pfxModule := &PrefixModule{
-		mu:               sync.Mutex{},
-		pfx:              ptable,
-		pfxSvs:           pfxSvs,
-		nfdc:             nfdcThread,
-		client:           objectClient,
-		insertionTrust:   insertionTrust,
-		insertionEnabled: insertionEnabled,
-		replicatePes:     config.PrefixEgreStateReplicationEnabled(),
-		pfxGroup:         config.PrefixEgreStatePrefix().Clone(),
+		mu:             sync.Mutex{},
+		pfx:            ptable,
+		pfxSvs:         pfxSvs,
+		nfdc:           nfdcThread,
+		client:         objectClient,
+		insertionTrust: insertionTrust,
+		replicatePes:   config.PrefixEgreStateReplicationEnabled(),
+		pfxGroup:       config.PrefixEgreStatePrefix().Clone(),
 		insertPrefix: enc.LOCALHOP.
 			Append(enc.NewGenericComponent("route")).
 			Append(enc.NewGenericComponent("insert")),
@@ -129,12 +124,8 @@ func NewPrefixModule(
 	if !pfxModule.replicatePes {
 		log.Warn(pfxModule, "Prefix egress state replication to PET is disabled")
 	}
-	if pfxModule.insertionEnabled {
-		if pfxModule.insertionTrust == nil {
-			log.Warn(pfxModule, "Prefix insertion signature validation is disabled")
-		} else {
-			log.Info(pfxModule, "Prefix insertion signature validation enabled")
-		}
+	if pfxModule.insertionTrust == nil {
+		panic("prefix insertion trust configuration must not be nil")
 	}
 
 	return pfxModule
@@ -323,10 +314,6 @@ func (pfx *PrefixModule) DataPrefix() enc.Name {
 
 func (pfx *PrefixModule) InsertionPrefix() enc.Name {
 	return pfx.insertPrefix.Clone()
-}
-
-func (pfx *PrefixModule) InsertionEnabled() bool {
-	return pfx.insertionEnabled
 }
 
 func (pfx *PrefixModule) OnInsertion(args ndn.InterestHandlerArgs) {

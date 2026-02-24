@@ -3,6 +3,9 @@ package config
 import (
 	_ "embed"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	enc "github.com/named-data/ndnd/std/encoding"
@@ -42,16 +45,22 @@ type Config struct {
 	KeyChainUri string `json:"keychain"`
 	// List of trust anchor full names.
 	TrustAnchors []string `json:"trust_anchors"`
-	// Path to trust schema for prefix insertion.
-	PrefixInsertionSchemaPath string `json:"prefix_insertion_schema"`
+	// Path to trust schema TLV file.
+	// If omitted, NullSchema is used.
+	TrustSchemaPath string `json:"trust_schema"`
 	// URI specifying KeyChain location for prefix insertion verifier.
 	PrefixInsertionKeychainUri string `json:"prefix_insertion_keychain"`
 	// List of trust anchor full names for prefix insertion.
 	PrefixInsertionTrustAnchors []string `json:"prefix_insertion_trust_anchors"`
+	// Path to trust schema TLV file used for prefix insertion validation.
+	// If omitted, NullSchema is used.
+	PrefixInsertionTrustSchemaPath string `json:"prefix_insertion_trust_schema"`
 	// List of permanent neighbors.
 	Neighbors []Neighbor `json:"neighbors"`
 	// Replicate Prefix Egress State into forwarder PET.
 	PrefixEgreStateReplicate bool `json:"prefix_egre_state_replicate"`
+	// Directory that contains the loaded config file.
+	ConfigDir string `json:"-"`
 
 	// Parsed Global Prefix
 	networkNameN enc.Name
@@ -73,6 +82,12 @@ type Config struct {
 	trustAnchorsN []enc.Name
 	// Prefix Insertion trust anchor names
 	prefixInsertionTrustAnchorsN []enc.Name
+	// Loaded routing trust schema bytes.
+	// Empty means NullSchema.
+	trustSchema []byte
+	// Loaded prefix insertion trust schema bytes.
+	// Empty means NullSchema.
+	prefixInsertionTrustSchema []byte
 }
 
 type Neighbor struct {
@@ -87,19 +102,20 @@ type Neighbor struct {
 	Created bool `json:"-"`
 }
 
-// (AI GENERATED DESCRIPTION): Creates a default `Config` instance with empty network and router fields, preset advertisement sync and router‑dead intervals, and an undefined key‑chain URI.
+// (AI GENERATED DESCRIPTION): Creates a default `Config` instance with empty network and router fields and preset advertisement sync and router‑dead intervals.
 func DefaultConfig() *Config {
 	return &Config{
 		Network:                      "", // invalid
 		Router:                       "", // invalid
 		AdvertisementSyncInterval_ms: 5000,
 		// Follow advertise_interval unless configured explicitly.
-		PrefixSyncInterval_ms:      0,
-		RouterDeadInterval_ms:      30000,
-		KeyChainUri:                "undefined",
-		PrefixInsertionSchemaPath:  "deny",
-		PrefixInsertionKeychainUri: "undefined",
-		PrefixEgreStateReplicate:   true,
+		PrefixSyncInterval_ms:          0,
+		RouterDeadInterval_ms:          30000,
+		KeyChainUri:                    "",
+		PrefixInsertionKeychainUri:     "",
+		TrustSchemaPath:                "",
+		PrefixInsertionTrustSchemaPath: "",
+		PrefixEgreStateReplicate:       true,
 	}
 }
 
@@ -170,20 +186,41 @@ func (c *Config) Parse() (err error) {
 		}
 		c.prefixInsertionTrustAnchorsN = append(c.prefixInsertionTrustAnchorsN, name)
 	}
-	switch c.PrefixInsertionSchemaPath {
-	case "", "insecure", "deny":
-		// Allowed modes:
-		// - insecure: do not validate prefix announcements.
-		// - deny: disable prefix-insertion handler.
-		// - empty: keep backward compatibility with legacy configs.
-	default:
-		if c.PrefixInsertionKeychainUri == "" ||
-			c.PrefixInsertionKeychainUri == "undefined" ||
-			c.PrefixInsertionKeychainUri == "insecure" {
-			return fmt.Errorf("prefix insertion keychain must be configured when schema is enabled")
+	prefixInsertionKeychain := strings.TrimSpace(c.PrefixInsertionKeychainUri)
+	if prefixInsertionKeychain == "" {
+		prefixInsertionKeychain = strings.TrimSpace(c.KeyChainUri)
+	}
+	c.PrefixInsertionKeychainUri = prefixInsertionKeychain
+
+	if len(c.prefixInsertionTrustAnchorsN) == 0 {
+		c.prefixInsertionTrustAnchorsN = append(c.prefixInsertionTrustAnchorsN, c.trustAnchorsN...)
+	}
+
+	// Load routing trust schema bytes.
+	trustSchemaPath := strings.TrimSpace(c.TrustSchemaPath)
+	if trustSchemaPath == "" {
+		c.trustSchema = nil
+	} else {
+		c.trustSchema, err = c.readConfigBytes(trustSchemaPath)
+		if err != nil {
+			return fmt.Errorf("failed to read trust schema: %w", err)
 		}
-		if len(c.prefixInsertionTrustAnchorsN) == 0 {
-			return fmt.Errorf("prefix insertion trust anchors must be configured when schema is enabled")
+	}
+
+	// Load prefix insertion trust schema bytes.
+	prefixSchemaPath := strings.TrimSpace(c.PrefixInsertionTrustSchemaPath)
+	if prefixSchemaPath == "" {
+		// If routing schema is configured from file, allow inheritance.
+		if trustSchemaPath != "" {
+			prefixSchemaPath = trustSchemaPath
+		}
+	}
+	if prefixSchemaPath == "" {
+		c.prefixInsertionTrustSchema = nil
+	} else {
+		c.prefixInsertionTrustSchema, err = c.readConfigBytes(prefixSchemaPath)
+		if err != nil {
+			return fmt.Errorf("failed to read prefix insertion trust schema: %w", err)
 		}
 	}
 
@@ -283,5 +320,19 @@ func (c *Config) PrefixInsertionTrustAnchorNames() []enc.Name {
 
 // (AI GENERATED DESCRIPTION): Returns the raw byte slice representing the configuration schema.
 func (c *Config) SchemaBytes() []byte {
-	return SchemaBytes
+	return c.trustSchema
+}
+
+func (c *Config) PrefixInsertionSchemaBytes() []byte {
+	return c.prefixInsertionTrustSchema
+}
+
+func (c *Config) readConfigBytes(path string) ([]byte, error) {
+	if path == "" {
+		return nil, fmt.Errorf("empty path")
+	}
+	if !filepath.IsAbs(path) && c.ConfigDir != "" {
+		path = filepath.Join(c.ConfigDir, path)
+	}
+	return os.ReadFile(path)
 }

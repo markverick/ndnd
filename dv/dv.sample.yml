@@ -5,23 +5,25 @@ dv:
   router: /ndn/sample
 
   # [required] Keychain URI for security
-  # - If "insecure" is specified, security is disabled
+  # - If "insecure" is specified, routing-data security is disabled
   # - Example: dir:///absolute/path/to/keychain
-  keychain: "insecure"
+  keychain: "dir:///etc/ndn/dv/keys"
+  # [optional] Path to routing trust schema TLV.
+  # If omitted or empty, ndn-dv uses NullSchema.
+  trust_schema: ""
   # [required] List of full names of all trust anchors
   trust_anchors:
     - "/ndn/KEY/%27%C4%B2%2A%9F%7B%81%27/ndn/v=1651246789556"
 
-  # [optional] Trust schema for prefix insertion
-  # - If "insecure" is specified, security is disabled
-  # - If "deny" is specified, the prefix insertion handler will be turned off
-  # - Example: /absolute/path/to/schema.tlv
-  prefix_insertion_schema: "insecure"
-  # [optional] Keychain URI for prefix insertion
-  prefix_insertion_keychain: "insecure"
-  # [optional] List of full names of all prefix insertion trust anchors
-  # - There should be at least one trust anchor if the schema is not "insecure" or "deny"
+  # [optional] Keychain URI for prefix insertion verifier.
+  # If omitted or empty, it falls back to "keychain".
+  prefix_insertion_keychain: ""
+  # [optional] List of full names of all prefix insertion trust anchors.
+  # If omitted, it falls back to "trust_anchors".
   prefix_insertion_trust_anchors: []
+  # [optional] Path to prefix insertion trust schema TLV.
+  # If omitted or empty, ndn-dv uses NullSchema.
+  prefix_insertion_trust_schema: ""
 
   # [optional] List of permanent neighbors
   # Example with all options:

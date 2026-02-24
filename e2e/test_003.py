@@ -2,13 +2,17 @@ import os
 import random
 import re
 import time
+from pathlib import Path
 
 from mininet.log import info
 from minindn.minindn import Minindn
 from minindn.apps.app_manager import AppManager
 
 from fw import NDNd_FW
+import dv
 import dv_util
+
+CLIENT_LVS_SCHEMA = str(Path(__file__).resolve().parent / "client_lvs_minindn.tlv")
 
 
 def _build_neighbors(nodes):
@@ -109,17 +113,35 @@ def _wait_for_prefix_insertion(node, prefix, deadline=120):
         time.sleep(1)
     raise Exception(f"Router insertion did not appear on {node.name} for {prefix}")
 
+def _prepare_producer_keychain(node, network):
+    keychain_dir = f"/tmp/prefix-insertion-{node.name}-keys"
+    node.cmd(f'rm -rf "{keychain_dir}" && mkdir -p "{keychain_dir}"')
+    node.cmd(f'ndnd sec keygen "{network}/{node.name}" ed25519 > "{keychain_dir}/{node.name}.key"')
+    node.cmd(
+        f'ndnd sec sign-cert "{dv.TRUST_ROOT_PATH}.key" '
+        f'< "{keychain_dir}/{node.name}.key" > "{keychain_dir}/{node.name}.cert"'
+    )
+    node.cmd(f'cp "{dv.TRUST_ROOT_PATH}.cert" "{keychain_dir}/root.cert"')
+    return keychain_dir
+
 
 def scenario(ndn: Minindn, network="/minindn"):
     """
     Validate stub-mode prefix insertion end-to-end.
     Security model:
     - DV routers run with trust anchors and signed router certs (dv_util.setup).
-    - Exposing client sends signed prefix-insertion interests in stub mode.
+    - Exposing client sends unsigned command Interests carrying signed PA Data.
     """
 
     info("Starting forwarder on nodes\n")
     AppManager(ndn, ndn.net.hosts, NDNd_FW)
+    if network != "/minindn":
+        raise Exception(
+            f"This scenario requires network=/minindn (received {network}) "
+            f"because it uses {CLIENT_LVS_SCHEMA}"
+        )
+    if not os.path.exists(CLIENT_LVS_SCHEMA):
+        raise Exception(f"Missing client LVS schema fixture: {CLIENT_LVS_SCHEMA}")
 
     producer, router, router_ip = _pick_producer_router(ndn.net.hosts)
     routers = [n for n in ndn.net.hosts if n != producer]
@@ -127,7 +149,14 @@ def scenario(ndn: Minindn, network="/minindn"):
         raise Exception("Need at least one router node distinct from producer")
 
     # Producer is a stub client only; only router nodes run DV.
-    dv_util.setup(ndn, network=network, nodes=routers)
+    dv_util.setup(
+        ndn,
+        network=network,
+        nodes=routers,
+        routing_trust_schema=dv.ROUTING_LVS_SCHEMA,
+        prefix_insertion_keychain="inherit",
+        prefix_insertion_trust_schema=CLIENT_LVS_SCHEMA,
+    )
     dv_util.converge(routers, network=network)
     _assert_no_local_dv(producer)
 
@@ -145,10 +174,14 @@ def scenario(ndn: Minindn, network="/minindn"):
 
     os.system(f"dd if=/dev/urandom of={test_file} bs=64K count=1 status=none")
     router_face = f"udp4://{router_ip}:6363"
+    producer_keychain = _prepare_producer_keychain(producer, network)
 
     cmd = (
         f"NDN_CLIENT_ROUTING_MODE=stub "
         f"NDN_CLIENT_ROUTER_URI={router_face} "
+        f"NDND_CLIENT_KEYCHAIN=dir://{producer_keychain} "
+        f"NDND_CLIENT_TRUST_SCHEMA={CLIENT_LVS_SCHEMA} "
+        f"NDND_CLIENT_TRUST_ANCHORS='{dv.TRUST_ROOT_NAME}' "
         f"ndnd put --expose \"{prefix}\" < {test_file} > {put_log} 2>&1 &"
     )
     info(f"{producer.name} {cmd}\n")
