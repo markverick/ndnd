@@ -21,11 +21,12 @@ def ensure_local_ndnd() -> None:
     local_bin = repo_root / ".bin"
     local_ndnd = local_bin / "ndnd"
     local_bin.mkdir(parents=True, exist_ok=True)
-    info("Building local ndnd binary for E2E scenarios\n")
-    subprocess.check_call(
-        ["go", "build", "-o", str(local_ndnd), "./cmd/ndnd"],
-        cwd=repo_root,
-    )
+    if not local_ndnd.exists():
+        info("Building local ndnd binary for E2E scenarios\n")
+        subprocess.check_call(
+            ["go", "build", "-o", str(local_ndnd), "./cmd/ndnd"],
+            cwd=repo_root,
+        )
     os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
 
 
