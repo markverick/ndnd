@@ -14,6 +14,7 @@ import test_001
 import test_002
 import test_003
 import test_004
+import test_005
 
 
 def ensure_local_ndnd() -> None:
@@ -67,5 +68,6 @@ if __name__ == '__main__':
     run(test_002.scenario)
     run(test_003.scenario)
     run(test_004.scenario)
+    run(test_005.scenario)
 
     ndn.stop()
