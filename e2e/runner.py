@@ -68,9 +68,6 @@ if __name__ == '__main__':
     run(test_002.scenario)
     run(test_003.scenario)
     run(test_004.scenario)
-
-    # Do not run test_005 here as it is broken.
-    # Test passes when run with run_scenario.py but not here
-    # run(test_005.scenario)
+    run(test_005.scenario)
 
     ndn.stop()
