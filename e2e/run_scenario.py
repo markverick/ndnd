@@ -38,7 +38,6 @@ def main():
     ensure_local_ndnd(repo_root)
 
     setLogLevel("info")
-    random.seed(0)
 
     Minindn.cleanUp()
     Minindn.verifyDependencies()
@@ -49,6 +48,8 @@ def main():
         mod = importlib.import_module(args.scenario)
         scenario = getattr(mod, "scenario")
         sig = inspect.signature(scenario)
+
+        random.seed(0)
 
         info("===================================================\n")
         start = time.time()
