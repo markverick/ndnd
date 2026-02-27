@@ -68,12 +68,6 @@ func (s *Broadcast) AfterReceiveInterest(
 	successfulForward := false
 
 	for i, nh := range nexthops {
-		// avoid broadcasting on hops that already have out record
-		// q: should we do this?
-		if oR := pitEntry.OutRecords()[nh.Nexthop]; oR != nil {
-			continue
-		}
-
 		// if there is an associated EgressRouter tag with this new route, then set packet.EgressRouter to the tag
 		oldEgress := packet.EgressRouter
 		if i < len(nextER) {

@@ -252,6 +252,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	// Get strategy for name
 	strategyName := table.FibStrategyTable.FindStrategyEnc(interest.Name())
 	strategy := t.strategies[strategyName.Hash()]
+	bestRouteStrategy := t.strategies[defn.BEST_ROUTE_STRATEGY.Hash()]
 
 	// Add in-record and determine if already pending
 	// this looks like custom interest again, but again can be changed without much issue?
@@ -384,6 +385,9 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 
 	if len(allowedNetNexthops) > 0 {
 		// Pass to strategy AfterReceiveInterest pipeline
+		if len(packet.EgressRouter) > 0 {
+			strategy = bestRouteStrategy
+		}
 		strategy.AfterReceiveInterest(packet, pitEntry, incomingFace.FaceID(), allowedNetNexthops, allowedNetER)
 	} else {
 		// NACK?
