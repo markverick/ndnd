@@ -71,7 +71,7 @@ func (s *Broadcast) AfterReceiveInterest(
 		// avoid broadcasting on hops that already have out record
 		// q: should we do this?
 		if oR := pitEntry.OutRecords()[nh.Nexthop]; oR != nil {
-			continue;
+			continue
 		}
 
 		// if there is an associated EgressRouter tag with this new route, then set packet.EgressRouter to the tag
@@ -94,7 +94,6 @@ func (s *Broadcast) AfterReceiveInterest(
 		core.Log.Debug(s, "No usable nexthop for Interest - DROP", "name", packet.Name)
 	}
 }
-
 
 // (AI GENERATED DESCRIPTION): No‑op hook invoked before satisfying an Interest in the Broadcast strategy – it performs no action.
 func (s *Broadcast) BeforeSatisfyInterest(pitEntry table.PitEntry, inFace uint64) {
