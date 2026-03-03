@@ -67,21 +67,13 @@ func (s *Broadcast) AfterReceiveInterest(
 
 	successfulForward := false
 
-	for i, nh := range nexthops {
-		// if there is an associated EgressRouter tag with this new route, then set packet.EgressRouter to the tag
-		oldEgress := packet.EgressRouter
-		if i < len(nextER) {
-			packet.EgressRouter = nextER[i]
-		}
-
+	for _, nh := range nexthops {
 		if sent := s.SendInterest(packet, pitEntry, nh.Nexthop, inFace); sent {
 			core.Log.Trace(s, "Forwarded Interest", "name", packet.Name, "faceid", nh.Nexthop)
 			successfulForward = true
 		} else {
 			core.Log.Trace(s, "Error forwarding interest", "name", packet.Name, "faceid", nh.Nexthop)
 		}
-
-		packet.EgressRouter = oldEgress
 	}
 
 	if !successfulForward {
