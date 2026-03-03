@@ -73,7 +73,8 @@ func (s *BestRoute) AfterReceiveInterest(
 		return
 	}
 
-	// Sort nexthops by cost and send to best-possible nexthop
+	// sort nexthops / nextER by cost and send to best-possible nexthop
+	sort.Slice(nextER, func(i, j int) bool { return nexthops[i].Cost < nexthops[j].Cost })
 	sort.Slice(nexthops, func(i, j int) bool { return nexthops[i].Cost < nexthops[j].Cost })
 
 	now := time.Now()
