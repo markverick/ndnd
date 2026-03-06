@@ -69,10 +69,6 @@ func (s *Replicast) AfterReceiveInterest(
 		return
 	}
 
-	// sort nexthops / nextER by cost and send to best-possible nexthop for each unique ER
-	sort.Slice(nextER, func(i, j int) bool { return nexthops[i].Cost < nexthops[j].Cost })
-	sort.Slice(nexthops, func(i, j int) bool { return nexthops[i].Cost < nexthops[j].Cost })
-
 	// if we are unable to map 1:1 next hop to intended ER, fallback to best-route strategy
 	bestRouteFallback := false
 
@@ -103,18 +99,31 @@ func (s *Replicast) AfterReceiveInterest(
 		return
 	}
 
+	erHops := make([]struct {
+		Er enc.Name
+		Nh *table.FibNextHopEntry
+	}, len(nextER))
+	for i := range nexthops {
+		erHops[i].Er = nextER[i]
+		erHops[i].Nh = nexthops[i]
+	}
+	// sort nexthops / nextER by cost and send to best-possible nexthop for each unique ER
+	sort.Slice(erHops, func(i, j int) bool { return erHops[i].Nh.Cost < erHops[i].Nh.Cost })
+
 	sentER := make(map[uint64]bool)
 
-	for i, nh := range nexthops {
-		er := nextER[i]
-		if sentER[er.Hash()] {
+	for _, ernh := range erHops {
+		nh := ernh.Nh
+		er := ernh.Er
+		if sentER[er.Hash()] && er.String() != "/localhop/neighbors" {
+			core.Log.Trace(s, "Avoiding duplicate interest", "name", packet.Name, "sentER", sentER, "faceid", nh, "er", er, "inFace", inFace)
 			continue
 		}
 
 		oldEgress := packet.EgressRouter
 		packet.EgressRouter = er
 		if sent := s.SendInterest(packet, pitEntry, nh.Nexthop, inFace); sent {
-			core.Log.Trace(s, "Forwarded Interest", "name", packet.Name, "faceid", nh.Nexthop)
+			core.Log.Trace(s, "Forwarded Interest", "name", packet.Name, "faceid", nh.Nexthop, "er", er, "inFace", inFace)
 			sentER[er.Hash()] = true
 		}
 		packet.EgressRouter = oldEgress
