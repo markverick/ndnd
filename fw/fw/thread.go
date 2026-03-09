@@ -382,10 +382,13 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	}
 
 	if len(allowedNetNexthops) > 0 {
-		// Pass to strategy AfterReceiveInterest pipeline
+		// Override strategy because ER tag implies that we want to unicast to 1 egress router.
+		// This may be reconsidered later due to concerns about packets controlling forwarding strategy.
 		if len(packet.EgressRouter) > 0 {
 			strategy = bestRouteStrategy
 		}
+
+		// Pass to strategy AfterReceiveInterest pipeline
 		strategy.AfterReceiveInterest(packet, pitEntry, incomingFace.FaceID(), allowedNetNexthops)
 	} else {
 		// NACK?
