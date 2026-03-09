@@ -115,7 +115,7 @@ func (s *Replicast) AfterReceiveInterest(
 	for _, ernh := range erHops {
 		nh := ernh.Nh
 		er := ernh.Er
-		if sentER[er.Hash()] && er.String() != "/localhop/neighbors" {
+		if sentER[er.Hash()] {
 			core.Log.Trace(s, "Avoiding duplicate interest", "name", packet.Name, "sentER", sentER, "faceid", nh, "er", er, "inFace", inFace)
 			continue
 		}

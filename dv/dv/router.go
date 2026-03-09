@@ -334,7 +334,7 @@ func (dv *Router) register() (err error) {
 		Args: &mgmt.ControlArgs{
 			Name: dv.pfx.SyncPrefix(),
 			Strategy: &mgmt.Strategy{
-				Name: config.ReplicastStrategy,
+				Name: config.BroadcastStrategy,
 			},
 		},
 		Retries: -1,

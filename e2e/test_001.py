@@ -64,8 +64,8 @@ def scenario(ndn: Minindn, network='/minindn'):
         if "multicast" in strategy:
             raise Exception(f'Multicast is to be retired, unexpectedly present in strategy on {node.name}')
         expected_strategies = [
-            # SVS sync interests should use replicast (#174)
-            "prefix=/minindn/32=DV/32=PES/32=svs strategy=/localhost/nfd/strategy/replicast/v=1",
+            # Localhop SVS sync interests should use broadcast (#174)
+            "prefix=/minindn/32=DV/32=PES/32=svs strategy=/localhost/nfd/strategy/broadcast/v=1",
 
             # Localhop advertisement sync interests should use broadcast strategy (#174)
             "prefix=/localhop/minindn/32=DV/32=ADS strategy=/localhost/nfd/strategy/broadcast/v=1",
