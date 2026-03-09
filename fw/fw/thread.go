@@ -328,7 +328,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 
 	routerName, routerNameSet := CfgRouterName()
 
-	nextLocal, nextNet, nextER := t.twoPhaseLookup(lookupName, packet.EgressRouter, routerName, routerNameSet)
+	nextLocal, nextNet := t.twoPhaseLookup(lookupName, packet.EgressRouter, routerName, routerNameSet)
 	// Query the FIB for all possible nexthops
 	// nexthops := table.FibStrategyTable.FindNextHopsEnc(lookupName)
 
@@ -351,26 +351,24 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	}
 
 	// Filter network FIB nexthops.
-	allowedNetNexthops := make([]*table.FibNextHopEntry, 0, len(nextNet))
-	allowedNetER := make([]enc.Name, 0, len(nextER))
-	for i, nexthop := range nextNet {
+	allowedNetNexthops := make([]StrategyCandidateHop, 0, len(nextNet))
+	for _, nexthop := range nextNet {
 		// Exclude incoming face
-		if nexthop.Nexthop == packet.IncomingFaceID {
+		if nexthop.HopEntry.Nexthop == packet.IncomingFaceID {
 			continue
 		}
 
 		// Exclude non-local faces for localhop enforcement
 		if localFacesOnly {
-			if face := dispatch.GetFace(nexthop.Nexthop); face != nil && face.Scope() != defn.Local {
+			if face := dispatch.GetFace(nexthop.HopEntry.Nexthop); face != nil && face.Scope() != defn.Local {
 				continue
 			}
 		}
 
 		// Exclude faces that have an in-record for this interest
 		// TODO: unclear where NFD dev guide specifies such behavior (if any)
-		if pitEntry.InRecords()[nexthop.Nexthop] == nil {
+		if pitEntry.InRecords()[nexthop.HopEntry.Nexthop] == nil {
 			allowedNetNexthops = append(allowedNetNexthops, nexthop)
-			allowedNetER = append(allowedNetER, nextER[i])
 		}
 	}
 
@@ -388,7 +386,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 		if len(packet.EgressRouter) > 0 {
 			strategy = bestRouteStrategy
 		}
-		strategy.AfterReceiveInterest(packet, pitEntry, incomingFace.FaceID(), allowedNetNexthops, allowedNetER)
+		strategy.AfterReceiveInterest(packet, pitEntry, incomingFace.FaceID(), allowedNetNexthops)
 	} else {
 		// NACK?
 	}
@@ -396,8 +394,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 
 func (t *Thread) twoPhaseLookup(lookupName enc.Name, egressRouter enc.Name, routerName enc.Name, routerNameSet bool) (
 	nextLocal []*table.PetNextHop,
-	nextNet []*table.FibNextHopEntry,
-	nextER []enc.Name,
+	nextNet []StrategyCandidateHop,
 ) {
 	// If EgressRouter is set and matches this router, forward to local app faces via PET.
 	if len(egressRouter) > 0 {
@@ -408,31 +405,35 @@ func (t *Thread) twoPhaseLookup(lookupName enc.Name, egressRouter enc.Name, rout
 					nextLocal = append(nextLocal, &petEntry.NextHops[i])
 				}
 			}
-			return nextLocal, nextNet, nextER
+			return nextLocal, nextNet
 		} else {
 			for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(egressRouter) {
-				nextNet = append(nextNet, nextHop)
-				nextER = append(nextER, egressRouter)
+				nextNet = append(nextNet, StrategyCandidateHop{
+					HopEntry:     nextHop,
+					EgressRouter: egressRouter,
+				})
 			}
-			return nextLocal, nextNet, nextER
+			return nextLocal, nextNet
 		}
 	}
 
 	// No EgressRouter: try local PET first, then map PET egress routers to network next hops.
 	petEntry, petFound := table.Pet.FindLongestPrefixEnc(lookupName)
 	if !petFound {
-		return nextLocal, nextNet, nextER
+		return nextLocal, nextNet
 	}
 	for i := range petEntry.NextHops {
 		nextLocal = append(nextLocal, &petEntry.NextHops[i])
 	}
 	for _, er := range petEntry.EgressRouters {
 		for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(er) {
-			nextNet = append(nextNet, nextHop)
-			nextER = append(nextER, er)
+			nextNet = append(nextNet, StrategyCandidateHop{
+				HopEntry:     nextHop,
+				EgressRouter: er,
+			})
 		}
 	}
-	return nextLocal, nextNet, nextER
+	return nextLocal, nextNet
 }
 
 // (AI GENERATED DESCRIPTION): Forwards an Interest packet to the chosen outgoing face, updating the PIT entry’s out‑record, generating a PIT token, and enforcing HopLimit and anti‑loop rules before transmitting it.

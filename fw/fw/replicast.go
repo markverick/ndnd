@@ -14,7 +14,6 @@ import (
 	"github.com/named-data/ndnd/fw/core"
 	"github.com/named-data/ndnd/fw/defn"
 	"github.com/named-data/ndnd/fw/table"
-	enc "github.com/named-data/ndnd/std/encoding"
 )
 
 // The strategy to forward interests to all nexthops.
@@ -61,75 +60,37 @@ func (s *Replicast) AfterReceiveInterest(
 	packet *defn.Pkt,
 	pitEntry table.PitEntry,
 	inFace uint64,
-	nexthops []*table.FibNextHopEntry,
-	nextER []enc.Name,
+	nexthops []StrategyCandidateHop,
 ) {
 	if len(nexthops) == 0 {
 		core.Log.Debug(s, "No nexthop found - DROP", "name", packet.Name)
 		return
 	}
 
-	// if we are unable to map 1:1 next hop to intended ER, fallback to best-route strategy
-	bestRouteFallback := false
-
-	if len(nexthops) != len(nextER) {
-		core.Log.Debug(
-			s,
-			"Warning - no 1:1 association between next hop and intended ER",
-			"name", packet.Name,
-			"len(nexthops)", len(nexthops),
-			"len(nextER)", len(nextER),
-		)
-		bestRouteFallback = true
-	}
-
-	if len(nextER) == 0 {
-		core.Log.Debug(s, "Warning - no ER tag set in forwarding")
-		bestRouteFallback = true
-	}
-
-	if bestRouteFallback {
-		core.Log.Debug(s, "Falling back to best-route forwarding", "name", packet.Name)
-		for _, nh := range nexthops {
-			if sent := s.SendInterest(packet, pitEntry, nh.Nexthop, inFace); sent {
-				return
-			}
-		}
-		core.Log.Debug(s, "No usable nexthop for Interest - DROP", "name", packet.Name)
-		return
-	}
-
-	erHops := make([]struct {
-		Er enc.Name
-		Nh *table.FibNextHopEntry
-	}, len(nextER))
-	for i := range nexthops {
-		erHops[i].Er = nextER[i]
-		erHops[i].Nh = nexthops[i]
-	}
-	// sort nexthops / nextER by cost and send to best-possible nexthop for each unique ER
-	sort.Slice(erHops, func(i, j int) bool { return erHops[i].Nh.Cost < erHops[i].Nh.Cost })
+	// sort nexthops by cost and send to best-possible nexthop for each unique ER
+	sort.Slice(nexthops, func(i, j int) bool {
+		return nexthops[i].HopEntry.Cost < nexthops[i].HopEntry.Cost
+	})
 
 	sentER := make(map[uint64]bool)
 
-	for _, ernh := range erHops {
-		nh := ernh.Nh
-		er := ernh.Er
-		if sentER[er.Hash()] {
-			core.Log.Trace(s, "Avoiding duplicate interest", "name", packet.Name, "sentER", sentER, "faceid", nh, "er", er, "inFace", inFace)
+	for _, nh := range nexthops {
+		if sentER[nh.EgressRouter.Hash()] {
+			core.Log.Trace(s, "Avoiding duplicate interest", "name", packet.Name, "sentER", sentER, "faceid", nh.HopEntry.Nexthop, "er", nh.EgressRouter, "inFace", inFace)
 			continue
 		}
 
 		oldEgress := packet.EgressRouter
-		packet.EgressRouter = er
-		if sent := s.SendInterest(packet, pitEntry, nh.Nexthop, inFace); sent {
-			core.Log.Trace(s, "Forwarded Interest", "name", packet.Name, "faceid", nh.Nexthop, "er", er, "inFace", inFace)
-			sentER[er.Hash()] = true
+		packet.EgressRouter = nh.EgressRouter
+		if sent := s.SendInterest(packet, pitEntry, nh.HopEntry.Nexthop, inFace); sent {
+			core.Log.Trace(s, "Forwarded Interest", "name", packet.Name, "faceid", nh.HopEntry.Nexthop, "er", nh.EgressRouter, "inFace", inFace)
+			sentER[nh.EgressRouter.Hash()] = true
 		}
 		packet.EgressRouter = oldEgress
 	}
 
-	for _, er := range nextER {
+	for _, nh := range nexthops {
+		er := nh.EgressRouter
 		if !sentER[er.Hash()] {
 			core.Log.Debug(s, "No usable replicast nexthop for Interest specific ER tag - DROP", "name", packet.Name, "ER", er)
 		}

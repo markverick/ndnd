@@ -10,7 +10,6 @@ import (
 	"github.com/named-data/ndnd/fw/core"
 	"github.com/named-data/ndnd/fw/defn"
 	"github.com/named-data/ndnd/fw/table"
-	enc "github.com/named-data/ndnd/std/encoding"
 )
 
 // The strategy to forward interests to all nexthops.
@@ -57,8 +56,7 @@ func (s *Broadcast) AfterReceiveInterest(
 	packet *defn.Pkt,
 	pitEntry table.PitEntry,
 	inFace uint64,
-	nexthops []*table.FibNextHopEntry,
-	nextER []enc.Name,
+	nexthops []StrategyCandidateHop,
 ) {
 	if len(nexthops) == 0 {
 		core.Log.Debug(s, "No nexthop found - DROP", "name", packet.Name)
@@ -68,11 +66,11 @@ func (s *Broadcast) AfterReceiveInterest(
 	successfulForward := false
 
 	for _, nh := range nexthops {
-		if sent := s.SendInterest(packet, pitEntry, nh.Nexthop, inFace); sent {
-			core.Log.Trace(s, "Forwarded Interest", "name", packet.Name, "faceid", nh.Nexthop)
+		if sent := s.SendInterest(packet, pitEntry, nh.HopEntry.Nexthop, inFace); sent {
+			core.Log.Trace(s, "Forwarded Interest", "name", packet.Name, "faceid", nh.HopEntry.Nexthop)
 			successfulForward = true
 		} else {
-			core.Log.Trace(s, "Error forwarding interest", "name", packet.Name, "faceid", nh.Nexthop)
+			core.Log.Trace(s, "Error forwarding interest", "name", packet.Name, "faceid", nh.HopEntry.Nexthop)
 		}
 	}
 
