@@ -1,7 +1,6 @@
 import random
 import os
-from threading import Thread, Lock
-from queue import Queue
+from pathlib import Path
 
 from mininet.log import info
 from minindn.minindn import Minindn
@@ -10,13 +9,21 @@ from minindn.apps.app_manager import AppManager
 from fw import NDNd_FW
 import dv_util
 
+def require_alo_sync():
+    alo_bin_path = Path.cwd() / ".bin/alo-latest"
+    if not alo_bin_path.exists():
+        raise RuntimeError(
+            f"alo-latest not found in {alo_bin_path!r}"
+            "please compile alo-latest using `make examples`"
+        )
+
 def scenario(ndn: Minindn, network='/minindn'):
     """
-    Simple file transfer scenario with NDNd forwarder.
-    This tests routing convergence and cat/put operations.
+    Test replicast using alo-latest svs sync application from std/examples
     """
 
     info('Starting forwarder on nodes\n')
+    require_alo_sync()
     AppManager(ndn, ndn.net.hosts, NDNd_FW, network=network)
 
     dv_util.setup(ndn, network=network)
@@ -29,7 +36,7 @@ def scenario(ndn: Minindn, network='/minindn'):
 
     # set the svs forwarding strategy to replicast as the alo-latest example says to do
     for node in ndn.net.hosts:
-        node.cmd("ndnd fw strategy-set prefix=/ndn/svs strategy=/localhost/nfd/strategy/multicast/v=1")
+        node.cmd("ndnd fw strategy-set prefix=/ndn/svs strategy=/localhost/nfd/strategy/replicast/v=1")
 
 
     # start the alo client on each node

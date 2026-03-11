@@ -1,7 +1,7 @@
 VERSION= $(shell git describe --tags --always --dirty)
 STD_PACKAGE = github.com/named-data/ndnd/std
 
-.PHONY: all install clean test coverage e2e
+.PHONY: all install clean test coverage e2e examples
 
 all: ndnd
 
@@ -9,6 +9,12 @@ ndnd: clean
 	CGO_ENABLED=0 go build -o ndnd \
 		-ldflags "-X '${STD_PACKAGE}/utils.NDNdVersion=${VERSION}'" \
 		cmd/ndnd/main.go
+
+examples: .bin/alo-latest
+
+.bin/alo-latest: std/examples/svs/alo-latest/main.go
+	mkdir -p .bin/
+	go build -o .bin/alo-latest std/examples/svs/alo-latest/main.go
 
 generate:
 	go generate ./...
