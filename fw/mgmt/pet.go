@@ -84,8 +84,10 @@ func (p *PETModule) addEgress(interest *Interest) {
 		return
 	}
 
-	table.Pet.AddEgressEnc(params.Name, params.Egress.Name)
-	core.Log.Info(p, "Added PET egress", "name", params.Name, "egress", params.Egress.Name)
+	// Cost==1 signals a Sync group (multicast) prefix announcement from ndn-dv.
+	multicast := params.Cost.GetOr(0) == 1
+	table.Pet.AddEgressEnc(params.Name, params.Egress.Name, multicast)
+	core.Log.Info(p, "Added PET egress", "name", params.Name, "egress", params.Egress.Name, "multicast", multicast)
 
 	p.manager.sendCtrlResp(interest, 200, "OK", &mgmt.ControlArgs{
 		Name:   params.Name,

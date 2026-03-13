@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// (AI GENERATED DESCRIPTION): Creates and returns the Cobra command hierarchy for the NDN command‑line tool, wiring each subcommand (e.g., status, face‑create, route‑add) to the appropriate Tool execution methods.
+// Creates and returns the Cobra command hierarchy for the NDN command‑line tool, wiring each subcommand (e.g., status, face‑create, route‑add) to the appropriate Tool execution methods.
 func Cmds() []*cobra.Command {
 	t := Tool{}
 	cmd := func(mod string, cmd string, defaults []string) func(*cobra.Command, []string) {
@@ -70,6 +70,18 @@ func Cmds() []*cobra.Command {
 		Short: "Print Prefix Egress Table (PET) entries",
 		Args:  cobra.NoArgs,
 		Run:   t.ExecPetList,
+	}, {
+		Use:   "bift-register [params]",
+		Short: "Register a router BFR-ID",
+		Args:  cobra.ArbitraryArgs,
+		Run: cmd("bift", "register", []string{
+			"cost=0",
+		}),
+	}, {
+		Use:   "bift-rebuild",
+		Short: "Rebuild BIFT from FIB/PET",
+		Args:  cobra.NoArgs,
+		Run:   cmd("bift", "rebuild", []string{}),
 	}, {
 		Use:   "pet-add-egress [params]",
 		Short: "Add an egress router to the Prefix Egress Table (PET)",

@@ -26,12 +26,16 @@ type PetEntry struct {
 	Name          enc.Name
 	EgressRouters []enc.Name
 	NextHops      []PetNextHop
+	// Multicast is true when this prefix is a Sync group prefix (as opposed to a
+	// producer prefix). Only Sync group prefixes trigger BIER at the ingress router.
+	Multicast bool
 }
 
 type petEntryState struct {
-	name     enc.Name
-	egress   map[uint64]enc.Name
-	nextHops map[uint64]PetNextHop
+	name      enc.Name
+	egress    map[uint64]enc.Name
+	nextHops  map[uint64]PetNextHop
+	multicast bool
 }
 
 func (e *petEntryState) snapshot() PetEntry {
@@ -39,6 +43,7 @@ func (e *petEntryState) snapshot() PetEntry {
 		Name:          e.name.Clone(),
 		EgressRouters: make([]enc.Name, 0, len(e.egress)),
 		NextHops:      make([]PetNextHop, 0, len(e.nextHops)),
+		Multicast:     e.multicast,
 	}
 
 	for _, egress := range e.egress {
@@ -100,7 +105,6 @@ var Pet = PrefixEgressTable{
 	},
 }
 
-// (AI GENERATED DESCRIPTION): Returns the literal string "pet" to identify the PET table in logs.
 func (p *PrefixEgressTable) String() string {
 	return "pet"
 }
@@ -161,7 +165,8 @@ func (p *PrefixEgressTable) getOrCreateEntry(node *petNode, name enc.Name) *petE
 }
 
 // AddEgressEnc adds an egress router for the specified prefix.
-func (p *PrefixEgressTable) AddEgressEnc(prefix enc.Name, egress enc.Name) {
+// multicast marks the prefix as a Sync group prefix; once set, the flag is sticky.
+func (p *PrefixEgressTable) AddEgressEnc(prefix enc.Name, egress enc.Name, multicast bool) {
 	if len(egress) == 0 {
 		return
 	}
@@ -172,6 +177,9 @@ func (p *PrefixEgressTable) AddEgressEnc(prefix enc.Name, egress enc.Name) {
 	node := p.root.fillTreeToPrefixEnc(prefix)
 	entry := p.getOrCreateEntry(node, prefix)
 	entry.egress[egress.Hash()] = egress.Clone()
+	if multicast {
+		entry.multicast = true
+	}
 }
 
 // RemoveEgressEnc removes an egress router from the specified prefix.

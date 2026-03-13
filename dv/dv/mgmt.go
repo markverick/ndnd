@@ -293,7 +293,7 @@ func (dv *Router) mgmtOnPrefix(args ndn.InterestHandlerArgs) {
 		}
 
 		dv.mutex.Lock()
-		dv.pfx.Announce(name, faceID, cost, validity)
+		dv.pfx.Announce(name, faceID, cost, cost == 1, validity)
 		dv.mutex.Unlock()
 
 		res.Val.StatusCode = 200

@@ -45,9 +45,10 @@ type PrefixModule struct {
 }
 
 type petEgressOp struct {
-	add    bool
-	name   enc.Name
-	egress enc.Name
+	add       bool
+	name      enc.Name
+	egress    enc.Name
+	multicast bool
 }
 
 type petNextHopOp struct {
@@ -225,10 +226,11 @@ func (pfx *PrefixModule) Reset() {
 
 // Announce adds or updates a local prefix in prefix egress state.
 // Use face=0 and cost=0 for route-only semantics.
-func (pfx *PrefixModule) Announce(name enc.Name, face uint64, cost uint64, validity *spec.ValidityPeriod) {
+// multicast=true marks this as a Sync group prefix (vs. a producer prefix).
+func (pfx *PrefixModule) Announce(name enc.Name, face uint64, cost uint64, multicast bool, validity *spec.ValidityPeriod) {
 	pfx.mu.Lock()
-	petOps := pfx.addRouterPrefixPet(pfx.routerName, name)
-	pfx.pfx.Announce(name, face, cost, validity)
+	petOps := pfx.addRouterPrefixPet(pfx.routerName, name, multicast)
+	pfx.pfx.Announce(name, face, cost, multicast, validity)
 	pfx.mu.Unlock()
 
 	pfx.applyPetOps(petOps)
@@ -330,7 +332,7 @@ func (pfx *PrefixModule) processUpdate(wire enc.Wire) (dirty bool, petOps []petE
 			petOps = append(petOps, pfx.resetRouterPet(router)...)
 		}
 		for _, add := range ops.PrefixOpAdds {
-			petOps = append(petOps, pfx.addRouterPrefixPet(router, add.Name)...)
+			petOps = append(petOps, pfx.addRouterPrefixPet(router, add.Name, add.Multicast)...)
 		}
 		for _, remove := range ops.PrefixOpRemoves {
 			petOps = append(petOps, pfx.removeRouterPrefixPet(router, remove.Name)...)
@@ -360,7 +362,7 @@ func (pfx *PrefixModule) resetRouterPet(router enc.Name) []petEgressOp {
 	return ops
 }
 
-func (pfx *PrefixModule) addRouterPrefixPet(router enc.Name, prefix enc.Name) []petEgressOp {
+func (pfx *PrefixModule) addRouterPrefixPet(router enc.Name, prefix enc.Name, multicast bool) []petEgressOp {
 	routerHash := router.Hash()
 	prefixes := pfx.petPrefixes[routerHash]
 	if prefixes == nil {
@@ -376,9 +378,10 @@ func (pfx *PrefixModule) addRouterPrefixPet(router enc.Name, prefix enc.Name) []
 
 	egress := router.Clone()
 	return []petEgressOp{{
-		add:    true,
-		name:   prefix.Clone(),
-		egress: egress,
+		add:       true,
+		name:      prefix.Clone(),
+		egress:    egress,
+		multicast: multicast,
 	}}
 }
 
@@ -413,17 +416,22 @@ func (pfx *PrefixModule) applyPetOps(ops []petEgressOp) {
 
 	for _, op := range ops {
 		cmd := "remove-egress"
+		args := &mgmt.ControlArgs{
+			Name:   op.name,
+			Egress: &mgmt.EgressRecord{Name: op.egress},
+		}
 		if op.add {
 			cmd = "add-egress"
+			// Encode the Sync group (multicast) flag via Cost: 1=multicast, absent=producer.
+			if op.multicast {
+				args.Cost = optional.Some(uint64(1))
+			}
 		}
 
 		pfx.nfdc.Exec(nfdc.NfdMgmtCmd{
-			Module: "pet",
-			Cmd:    cmd,
-			Args: &mgmt.ControlArgs{
-				Name:   op.name,
-				Egress: &mgmt.EgressRecord{Name: op.egress},
-			},
+			Module:  "pet",
+			Cmd:     cmd,
+			Args:    args,
 			Retries: -1,
 		})
 	}

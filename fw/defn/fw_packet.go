@@ -117,12 +117,10 @@ type FwEgressRouter struct {
 	Name enc.Name `tlv:"0x07"`
 }
 
-// (AI GENERATED DESCRIPTION): Returns the Name value (`NameV`) stored in a forwarded Interest packet.
 func (p *FwInterest) Name() enc.Name {
 	return p.NameV
 }
 
-// (AI GENERATED DESCRIPTION): Returns the optional lifetime value of this Interest packet, if one has been set.
 func (p *FwInterest) Lifetime() optional.Optional[time.Duration] {
 	return p.InterestLifetimeV
 }

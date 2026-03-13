@@ -5,7 +5,7 @@ import shutil
 from minindn.apps.application import Application
 
 class NDNd_FW(Application):
-    def __init__(self, node, config={}, logLevel='INFO', threads=2, network='/minindn'):
+    def __init__(self, node, config={}, logLevel='INFO', threads=2, network='/minindn', bier_index=-1):
         Application.__init__(self, node)
 
         if not shutil.which('ndnd'):
@@ -37,6 +37,8 @@ class NDNd_FW(Application):
                 'threads': threads,
                 # Two-phase PET forwarding needs the local router identity.
                 'router_name': f'{network}/{node.name}',
+                # BIER bit index for this router (-1 = disabled)
+                'bier_index': bier_index,
             },
         }
 

@@ -1,0 +1,296 @@
+/* BIER - Bit Index Explicit Replication for ndnd
+ *
+ * Stateless multicast forwarding using bit-indexed replication.
+ * Each router is assigned a unique BFR-ID (bit index) by the operator.
+ * The BIFT maps each bit position to a next-hop face and forwarding bit mask.
+ */
+
+package fw
+
+import (
+	"sort"
+	"sync"
+
+	"github.com/named-data/ndnd/fw/core"
+	"github.com/named-data/ndnd/fw/table"
+	enc "github.com/named-data/ndnd/std/encoding"
+)
+
+// BiftEntry represents a single entry in the Bit Index Forwarding Table.
+// Each entry maps a BFR-ID (bit position) to a next-hop face and
+// the forwarding bit mask (F-BM) for that neighbor.
+type BiftEntry struct {
+	BfrId      int      // Bit position this entry is for
+	RouterName enc.Name // Name of the destination router
+	NextHop    uint64   // Face ID to reach this router's next hop
+	Fbm        []byte   // Forwarding Bit Mask for this neighbor
+}
+
+// Bift is the global Bit Index Forwarding Table.
+var Bift = &BiftState{}
+
+// BiftState holds the current BIFT and mapping state.
+type BiftState struct {
+	mu      sync.RWMutex
+	entries map[int]*BiftEntry // BFR-ID -> entry
+
+	// routerBit maps router name hash -> BFR-ID for quick lookup
+	routerBit map[uint64]int
+}
+
+func (b *BiftState) String() string {
+	return "bift"
+}
+
+// CfgBierIndex returns the configured BIER index for this router.
+// Returns -1 if BIER is not configured (disabled).
+func CfgBierIndex() int {
+	return core.C.Fw.BierIndex
+}
+
+// IsBierEnabled returns true if BIER forwarding is enabled on this router.
+func IsBierEnabled() bool {
+	return CfgBierIndex() >= 0
+}
+
+// --- Bit-string manipulation helpers ---
+
+// BierGetBit returns true if bit position pos is set in the bitstring.
+// Bit 0 is the LSB of the first byte.
+func BierGetBit(bs []byte, pos int) bool {
+	byteIdx := pos / 8
+	if byteIdx >= len(bs) {
+		return false
+	}
+	bitIdx := uint(pos % 8)
+	return (bs[byteIdx] & (1 << bitIdx)) != 0
+}
+
+// BierSetBit sets bit position pos in the bitstring.
+// Grows the slice if needed.
+func BierSetBit(bs []byte, pos int) []byte {
+	byteIdx := pos / 8
+	for byteIdx >= len(bs) {
+		bs = append(bs, 0)
+	}
+	bitIdx := uint(pos % 8)
+	bs[byteIdx] |= (1 << bitIdx)
+	return bs
+}
+
+// BierClearBit clears bit position pos in the bitstring.
+func BierClearBit(bs []byte, pos int) {
+	byteIdx := pos / 8
+	if byteIdx >= len(bs) {
+		return
+	}
+	bitIdx := uint(pos % 8)
+	bs[byteIdx] &^= (1 << bitIdx)
+}
+
+// BierAnd returns bitwise AND of two bitstrings. Result length = min(len(a), len(b)).
+func BierAnd(a, b []byte) []byte {
+	minLen := len(a)
+	if len(b) < minLen {
+		minLen = len(b)
+	}
+	result := make([]byte, minLen)
+	for i := 0; i < minLen; i++ {
+		result[i] = a[i] & b[i]
+	}
+	return result
+}
+
+// BierAndNot returns a &^ b (a AND NOT b). Clears bits in a that are set in b.
+func BierAndNot(a, b []byte) []byte {
+	result := make([]byte, len(a))
+	copy(result, a)
+	minLen := len(a)
+	if len(b) < minLen {
+		minLen = len(b)
+	}
+	for i := 0; i < minLen; i++ {
+		result[i] = a[i] &^ b[i]
+	}
+	return result
+}
+
+// BierIsZero returns true if all bits in the bitstring are zero.
+func BierIsZero(bs []byte) bool {
+	for _, b := range bs {
+		if b != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// BierClone returns a copy of the bitstring.
+func BierClone(bs []byte) []byte {
+	if bs == nil {
+		return nil
+	}
+	c := make([]byte, len(bs))
+	copy(c, bs)
+	return c
+}
+
+// --- BIFT Construction ---
+
+// RegisterBierRouter registers a router name with its operator-assigned BFR-ID.
+// This is called when learning about a router's BIER index (e.g., from DV).
+func (b *BiftState) RegisterRouter(routerName enc.Name, bfrId int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.entries == nil {
+		b.entries = make(map[int]*BiftEntry)
+		b.routerBit = make(map[uint64]int)
+	}
+
+	b.entries[bfrId] = &BiftEntry{
+		BfrId:      bfrId,
+		RouterName: routerName.Clone(),
+	}
+	b.routerBit[routerName.Hash()] = bfrId
+
+	core.Log.Info(b, "Registered BIER router", "name", routerName, "bfr-id", bfrId)
+}
+
+// UpdateNextHop updates the next-hop face for reaching a given BFR-ID.
+// Called when FIB changes.
+func (b *BiftState) UpdateNextHop(bfrId int, nextHop uint64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if entry, ok := b.entries[bfrId]; ok {
+		entry.NextHop = nextHop
+	}
+}
+
+// RebuildFbm rebuilds forwarding bit masks for all BIFT entries.
+// Groups BFR-IDs by their next-hop face and computes the F-BM for each group.
+func (b *BiftState) RebuildFbm() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	// Find maximum BFR-ID to size bitstrings
+	maxBit := 0
+	for bfrId := range b.entries {
+		if bfrId > maxBit {
+			maxBit = bfrId
+		}
+	}
+	bsLen := (maxBit / 8) + 1
+
+	// Group by next-hop face
+	faceGroups := make(map[uint64][]int) // faceID -> list of BFR-IDs
+	for bfrId, entry := range b.entries {
+		if entry.NextHop > 0 {
+			faceGroups[entry.NextHop] = append(faceGroups[entry.NextHop], bfrId)
+		}
+	}
+
+	// Build F-BM for each face group
+	faceFbm := make(map[uint64][]byte)
+	for faceID, bfrIds := range faceGroups {
+		fbm := make([]byte, bsLen)
+		for _, id := range bfrIds {
+			fbm = BierSetBit(fbm, id)
+		}
+		faceFbm[faceID] = fbm
+	}
+
+	// Assign F-BM to each entry based on its next-hop face
+	for _, entry := range b.entries {
+		if fbm, ok := faceFbm[entry.NextHop]; ok {
+			entry.Fbm = fbm
+		}
+	}
+
+	core.Log.Info(b, "Rebuilt BIFT forwarding bit masks",
+		"entries", len(b.entries), "faces", len(faceGroups))
+}
+
+// BuildFromFibPet rebuilds the BIFT from the current FIB and PET state.
+// For each known router (registered via DV), looks up the FIB to find next hops.
+func (b *BiftState) BuildFromFibPet() {
+	b.mu.RLock()
+	entries := make(map[int]*BiftEntry, len(b.entries))
+	for k, v := range b.entries {
+		entries[k] = v
+	}
+	b.mu.RUnlock()
+
+	// Update next hops from FIB for each registered router
+	for _, entry := range entries {
+		nexthops := table.FibStrategyTable.FindNextHopsEnc(entry.RouterName)
+		if len(nexthops) > 0 {
+			// Sort by cost and pick best
+			sort.Slice(nexthops, func(i, j int) bool {
+				return nexthops[i].Cost < nexthops[j].Cost
+			})
+			b.UpdateNextHop(entry.BfrId, nexthops[0].Nexthop)
+		}
+	}
+
+	b.RebuildFbm()
+}
+
+// GetRouterBfrId returns the BFR-ID for a given router name.
+func (b *BiftState) GetRouterBfrId(routerName enc.Name) (int, bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if id, ok := b.routerBit[routerName.Hash()]; ok {
+		return id, true
+	}
+	return -1, false
+}
+
+// --- BFIR Functions ---
+
+// BuildBierBitString builds a BIER bit-string from a list of egress router names.
+// Returns nil if no egress routers have known BFR-IDs.
+func (b *BiftState) BuildBierBitString(egressRouters []enc.Name) []byte {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	var bs []byte
+	for _, er := range egressRouters {
+		if id, ok := b.routerBit[er.Hash()]; ok {
+			bs = BierSetBit(bs, id)
+		}
+	}
+	return bs
+}
+
+// --- Replication (BFR/BFER) ---
+
+// BiftNeighborEntry represents a unique next-hop face and its aggregated F-BM.
+type BiftNeighborEntry struct {
+	FaceID uint64
+	Fbm    []byte
+}
+
+// GetNeighborEntries returns the unique neighbor entries (grouped by face) from the BIFT.
+func (b *BiftState) GetNeighborEntries() []BiftNeighborEntry {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	faceMap := make(map[uint64][]byte)
+	for _, entry := range b.entries {
+		if entry.NextHop == 0 || entry.Fbm == nil {
+			continue
+		}
+		if _, ok := faceMap[entry.NextHop]; !ok {
+			faceMap[entry.NextHop] = BierClone(entry.Fbm)
+		}
+	}
+
+	neighbors := make([]BiftNeighborEntry, 0, len(faceMap))
+	for faceID, fbm := range faceMap {
+		neighbors = append(neighbors, BiftNeighborEntry{FaceID: faceID, Fbm: fbm})
+	}
+	return neighbors
+}

@@ -117,6 +117,8 @@ type Config struct {
 		LockThreadsToCores bool `json:"lock_threads_to_cores"`
 		// Router name (if routing is configured)
 		RouterName string `json:"router_name"`
+		// BIER bit index for this router (-1 = disabled)
+		BierIndex int `json:"bier_index"`
 	} `json:"fw"`
 
 	Mgmt struct {
@@ -167,7 +169,6 @@ type Config struct {
 	} `json:"tables"`
 }
 
-// (AI GENERATED DESCRIPTION): Creates and returns a `Config` object pre‑populated with default settings for core parameters, face types, forwarding, management, and table options.
 func DefaultConfig() *Config {
 	c := &Config{}
 	c.Core.LogLevel = "INFO"
@@ -219,6 +220,7 @@ func DefaultConfig() *Config {
 	c.Fw.QueueSize = 1024
 	c.Fw.LockThreadsToCores = false
 	c.Fw.RouterName = ""
+	c.Fw.BierIndex = -1
 
 	c.Mgmt.AllowLocalhop = false
 

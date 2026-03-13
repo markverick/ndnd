@@ -94,15 +94,20 @@ func (pt *PrefixEgreState) Reset() {
 
 // Announce updates or creates a local prefix with an optional validity period.
 // Use face=0 and cost=0 for route-only semantics.
-func (pt *PrefixEgreState) Announce(name enc.Name, face uint64, cost uint64, validity *spec.ValidityPeriod) {
+// multicast=true marks this as a Sync group prefix (vs. a producer prefix).
+func (pt *PrefixEgreState) Announce(name enc.Name, face uint64, cost uint64, multicast bool, validity *spec.ValidityPeriod) {
 	hash := name.TlvStr()
 	entry := pt.me.Prefixes[hash]
 	publishAdd := false
 	if entry == nil {
 		entry = &PrefixEntry{
-			Name: name,
+			Name:      name,
+			Multicast: multicast,
 		}
 		pt.me.Prefixes[hash] = entry
+		publishAdd = true
+	} else if multicast && !entry.Multicast {
+		entry.Multicast = true
 		publishAdd = true
 	}
 
