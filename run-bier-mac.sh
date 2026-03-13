@@ -3,7 +3,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NDND_DIR="${ROOT_DIR}/ndnd"
+# The script lives inside the ndnd/ repo root, so ROOT_DIR IS the ndnd dir.
+NDND_DIR="${ROOT_DIR}"
 
 ARCH="$(uname -m)"
 GOARCH="${ARCH/x86_64/amd64}"
@@ -11,8 +12,8 @@ GOARCH="${GOARCH/arm64/arm64}"
 
 echo "=== Building Linux binaries (GOARCH=${GOARCH}) ==="
 cd "${NDND_DIR}"
-CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" go build -o .bin/ndnd     ./cmd/ndnd/main.go
-CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" go build -o .bin/svs-chat ./cmd/svs-chat/main.go
+CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" go build -o .bin/ndnd     ./cmd/ndnd
+CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" go build -o .bin/svs-chat ./cmd/svs-chat
 echo "Built: .bin/ndnd, .bin/svs-chat"
 
 echo "=== Running e2e tests in Docker ==="
