@@ -44,6 +44,17 @@ func newFibStrategyTableTree() {
 	tree.root.name = enc.Name{}
 }
 
+// NewFibStrategyTree creates a standalone FIB-Strategy tree instance.
+// Unlike newFibStrategyTableTree, this does not set the global FibStrategyTable.
+func NewFibStrategyTree() *FibStrategyTree {
+	tree := new(FibStrategyTree)
+	tree.root = new(fibStrategyTreeEntry)
+	tree.root.component = enc.Component{}
+	tree.root.strategy = defn.DEFAULT_STRATEGY
+	tree.root.name = enc.Name{}
+	return tree
+}
+
 // findExactMatchEntry returns the entry corresponding to the exact match of
 // the given name. It returns nil if no exact match was found.
 func (f *fibStrategyTreeEntry) findExactMatchEntryEnc(name enc.Name) *fibStrategyTreeEntry {

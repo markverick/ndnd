@@ -10,6 +10,7 @@ package table
 import (
 	"time"
 
+	"github.com/named-data/ndnd/fw/core"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/types/priority_queue"
 )
@@ -44,7 +45,7 @@ func (d *DeadNonceList) Insert(name enc.Name, nonce uint32) bool {
 
 	if !exists {
 		d.list[hash] = true
-		d.expirationQueue.Push(hash, time.Now().Add(CfgDeadNonceListLifetime()).UnixNano())
+		d.expirationQueue.Push(hash, core.Now().Add(CfgDeadNonceListLifetime()).UnixNano())
 	}
 	return exists
 }
@@ -52,7 +53,7 @@ func (d *DeadNonceList) Insert(name enc.Name, nonce uint32) bool {
 // RemoveExpiredEntry removes all expired entries from Dead Nonce List.
 func (d *DeadNonceList) RemoveExpiredEntries() {
 	evicted := 0
-	for d.expirationQueue.Len() > 0 && d.expirationQueue.PeekPriority() < time.Now().UnixNano() {
+	for d.expirationQueue.Len() > 0 && d.expirationQueue.PeekPriority() < core.Now().UnixNano() {
 		hash := d.expirationQueue.Pop()
 		delete(d.list, hash)
 		evicted += 1

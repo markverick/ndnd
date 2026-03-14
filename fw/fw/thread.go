@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"runtime"
 	"sync/atomic"
-	"time"
 
 	"github.com/named-data/ndnd/fw/core"
 	"github.com/named-data/ndnd/fw/defn"
@@ -64,6 +63,7 @@ type Thread struct {
 	threadID      int
 	pending       chan *defn.Pkt
 	pitCS         table.PitCsTable
+	fib           table.FibStrategy // per-thread FIB override, nil = use global
 	strategies    map[uint64]Strategy
 	deadNonceList *table.DeadNonceList
 	shouldQuit    chan interface{}
@@ -101,6 +101,19 @@ func (t *Thread) String() string {
 // GetID returns the ID of the forwarding thread
 func (t *Thread) GetID() int {
 	return t.threadID
+}
+
+// SetFib sets a per-thread FIB override. If nil, the global FibStrategyTable is used.
+func (t *Thread) SetFib(fib table.FibStrategy) {
+	t.fib = fib
+}
+
+// Fib returns the FIB used by this thread.
+func (t *Thread) Fib() table.FibStrategy {
+	if t.fib != nil {
+		return t.fib
+	}
+	return table.FibStrategyTable
 }
 
 // Counters returns the counters for this forwarding thread
@@ -170,6 +183,23 @@ func (t *Thread) QueueData(data *defn.Pkt) {
 	default:
 		core.Log.Error(t, "Data dropped due to full queue")
 	}
+}
+
+// ProcessPacket synchronously processes a single packet.
+// This is used by the simulation layer to avoid goroutine-based dispatch.
+func (t *Thread) ProcessPacket(pkt *defn.Pkt) {
+	if pkt.L3.Interest != nil {
+		t.processIncomingInterest(pkt)
+	} else if pkt.L3.Data != nil {
+		t.processIncomingData(pkt)
+	}
+}
+
+// RunMaintenance runs periodic PIT/CS and dead nonce list maintenance.
+// This is used by the simulation layer instead of ticker-based updates.
+func (t *Thread) RunMaintenance() {
+	t.deadNonceList.RemoveExpiredEntries()
+	t.pitCS.Update()
 }
 
 // (AI GENERATED DESCRIPTION): Processes an incoming Interest packet: verifies its validity, enforces hop limits and scope, checks for nonces and dead‑nonce loops, updates the PIT and content store, selects and filters next‑hops via the FIB, and forwards the Interest according to the chosen forwarding strategy.
@@ -250,7 +280,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	}
 
 	// Get strategy for name
-	strategyName := table.FibStrategyTable.FindStrategyEnc(interest.Name())
+	strategyName := t.Fib().FindStrategyEnc(interest.Name())
 	strategy := t.strategies[strategyName.Hash()]
 
 	// Add in-record and determine if already pending
@@ -274,7 +304,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 				csData, csWire, err := csEntry.Copy()
 				if csData != nil && csWire != nil {
 					// Mark PIT entry as expired
-					table.UpdateExpirationTimer(pitEntry, time.Now())
+					table.UpdateExpirationTimer(pitEntry, core.Now())
 
 					// Create the pending packet structure
 					packet.L3.Data = csData
@@ -325,7 +355,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	}
 
 	// Query the FIB for all possible nexthops
-	nexthops := table.FibStrategyTable.FindNextHopsEnc(lookupName)
+	nexthops := t.Fib().FindNextHopsEnc(lookupName)
 
 	// If the first component is /localhop, we do not forward interests received
 	// on non-local faces to non-local faces
@@ -467,7 +497,7 @@ func (t *Thread) processIncomingData(packet *defn.Pkt) {
 	}
 
 	// Get strategy for name
-	strategyName := table.FibStrategyTable.FindStrategyEnc(data.NameV)
+	strategyName := t.Fib().FindStrategyEnc(data.NameV)
 	strategy := t.strategies[strategyName.Hash()]
 
 	if len(pitEntries) == 1 {
@@ -476,7 +506,7 @@ func (t *Thread) processIncomingData(packet *defn.Pkt) {
 		pitEntry := pitEntries[0]
 
 		// Set PIT entry expiration to now
-		table.UpdateExpirationTimer(pitEntry, time.Now())
+		table.UpdateExpirationTimer(pitEntry, core.Now())
 
 		// Invoke strategy's AfterReceiveData
 		core.Log.Trace(t, "Sending Data", "name", packet.Name, "strategy", strategyName)
@@ -510,7 +540,7 @@ func (t *Thread) processIncomingData(packet *defn.Pkt) {
 			}
 
 			// Set PIT entry expiration to now
-			table.UpdateExpirationTimer(pitEntry, time.Now())
+			table.UpdateExpirationTimer(pitEntry, core.Now())
 
 			// Invoke strategy's BeforeSatisfyInterest
 			strategy.BeforeSatisfyInterest(pitEntry, packet.IncomingFaceID)
