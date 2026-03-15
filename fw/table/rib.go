@@ -52,6 +52,11 @@ var Rib = RibTable{
 	},
 }
 
+// InitRoot initializes the root entry for a newly created RibTable.
+func (r *RibTable) InitRoot() {
+	r.root.children = make(map[uint64]*RibEntry)
+}
+
 // (AI GENERATED DESCRIPTION): Adds any missing intermediate prefix nodes for a given name in the RIB tree, starting from the longest existing prefix and creating new entries down to the full name, then returns the leaf entry.
 func (r *RibEntry) fillTreeToPrefixEnc(name enc.Name) *RibEntry {
 	entry := r.findLongestPrefixEntryEnc(name)

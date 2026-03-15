@@ -268,11 +268,12 @@ func (e *SimEngine) ExecMgmtCmd(module string, cmd string, args any) (any, error
 			}
 			faceID := ca.FaceId.GetOr(0)
 			cost := ca.Cost.GetOr(0)
+			origin := ca.Origin.GetOr(0)
 			if faceID == 0 {
 				// Default to app face — the DV registers prefixes for itself
 				faceID = e.appFaceID
 			}
-			e.forwarder.AddRoute(ca.Name, faceID, cost)
+			e.forwarder.AddRouteWithOrigin(ca.Name, faceID, cost, origin)
 			return &mgmt.ControlResponse{Val: &mgmt.ControlResponseVal{
 				StatusCode: 200,
 				Params:     &mgmt.ControlArgs{Name: ca.Name, FaceId: optional.Some(faceID)},
@@ -282,8 +283,9 @@ func (e *SimEngine) ExecMgmtCmd(module string, cmd string, args any) (any, error
 				return nil, fmt.Errorf("rib/unregister: missing name")
 			}
 			faceID := ca.FaceId.GetOr(0)
+			origin := ca.Origin.GetOr(0)
 			if faceID > 0 {
-				e.forwarder.RemoveRoute(ca.Name, faceID)
+				e.forwarder.RemoveRouteWithOrigin(ca.Name, faceID, origin)
 			}
 			return &mgmt.ControlResponse{Val: &mgmt.ControlResponseVal{StatusCode: 200}}, nil
 		}

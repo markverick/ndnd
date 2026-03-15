@@ -357,3 +357,43 @@ func NdndSimRegisterProducer(nodeId C.uint32_t, prefixStr *C.char, prefixLen C.i
 
 	return 0
 }
+
+//export NdndSimAnnouncePrefixToDv
+func NdndSimAnnouncePrefixToDv(nodeId C.uint32_t, prefixStr *C.char, prefixLen C.int) C.int {
+	if globalRuntime == nil {
+		return -1
+	}
+	node := globalRuntime.GetNode(uint32(nodeId))
+	if node == nil {
+		return -1
+	}
+
+	prefix := C.GoStringN(prefixStr, prefixLen)
+	name, err := parseNameFromString(prefix)
+	if err != nil {
+		return -1
+	}
+
+	node.AnnouncePrefixToDv(name, 0)
+	return 0
+}
+
+//export NdndSimWithdrawPrefixFromDv
+func NdndSimWithdrawPrefixFromDv(nodeId C.uint32_t, prefixStr *C.char, prefixLen C.int) C.int {
+	if globalRuntime == nil {
+		return -1
+	}
+	node := globalRuntime.GetNode(uint32(nodeId))
+	if node == nil {
+		return -1
+	}
+
+	prefix := C.GoStringN(prefixStr, prefixLen)
+	name, err := parseNameFromString(prefix)
+	if err != nil {
+		return -1
+	}
+
+	node.WithdrawPrefixFromDv(name)
+	return 0
+}

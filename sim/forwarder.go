@@ -30,6 +30,9 @@ type SimForwarder struct {
 
 	clock Clock
 
+	// Per-node RIB (routes go through here so readvertise fires)
+	rib *table.RibTable
+
 	// Per-node face table (face ID → DispatchFace)
 	faces  map[uint64]*DispatchFace
 	faceMu sync.Mutex
@@ -45,9 +48,13 @@ type SimForwarder struct {
 // NewSimForwarder creates a new simulation forwarder backed by a real fw.Thread.
 // Each simulated node should have its own SimForwarder.
 func NewSimForwarder(clock Clock) *SimForwarder {
+	rib := &table.RibTable{}
+	rib.InitRoot()
+
 	fwd := &SimForwarder{
 		clock: clock,
 		faces: make(map[uint64]*DispatchFace),
+		rib:   rib,
 	}
 
 	// Create a real forwarding thread (ID 0 — single-threaded in sim)
@@ -113,11 +120,32 @@ func (fwd *SimForwarder) GetFace(id uint64) *DispatchFace {
 	return fwd.faces[id]
 }
 
-// --- FIB management ---
+// --- RIB/FIB management ---
 
-// AddRoute adds a FIB entry for this forwarder.
+// withNodeFib temporarily swaps the global FibStrategyTable to this node's
+// FIB for the duration of f(). The simulation is single-threaded so this
+// is safe — it ensures RIB's updateNexthopsEnc writes to the correct FIB.
+func (fwd *SimForwarder) withNodeFib(f func()) {
+	old := table.FibStrategyTable
+	table.FibStrategyTable = fwd.thread.Fib()
+	defer func() { table.FibStrategyTable = old }()
+	f()
+}
+
+// AddRoute adds a route through this node's RIB so that readvertise fires.
 func (fwd *SimForwarder) AddRoute(name enc.Name, faceID uint64, cost uint64) {
-	fwd.thread.Fib().InsertNextHopEnc(name, faceID, cost)
+	fwd.AddRouteWithOrigin(name, faceID, cost, 0)
+}
+
+// AddRouteWithOrigin adds a route with a specific origin value.
+func (fwd *SimForwarder) AddRouteWithOrigin(name enc.Name, faceID uint64, cost uint64, origin uint64) {
+	fwd.withNodeFib(func() {
+		fwd.rib.AddEncRoute(name, &table.Route{
+			FaceID: faceID,
+			Cost:   cost,
+			Origin: origin,
+		})
+	})
 }
 
 // SetStrategy sets the forwarding strategy for a prefix.
@@ -125,9 +153,16 @@ func (fwd *SimForwarder) SetStrategy(prefix enc.Name, strategy enc.Name) {
 	fwd.thread.Fib().SetStrategyEnc(prefix, strategy)
 }
 
-// RemoveRoute removes a FIB entry.
+// RemoveRoute removes a route through this node's RIB so that readvertise fires.
 func (fwd *SimForwarder) RemoveRoute(name enc.Name, faceID uint64) {
-	fwd.thread.Fib().RemoveNextHopEnc(name, faceID)
+	fwd.RemoveRouteWithOrigin(name, faceID, 0)
+}
+
+// RemoveRouteWithOrigin removes a route with a specific origin value.
+func (fwd *SimForwarder) RemoveRouteWithOrigin(name enc.Name, faceID uint64, origin uint64) {
+	fwd.withNodeFib(func() {
+		fwd.rib.RemoveRouteEnc(name, faceID, origin)
+	})
 }
 
 // --- Packet processing ---

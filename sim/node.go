@@ -258,3 +258,14 @@ func (n *Node) AnnouncePrefixToDv(name enc.Name, cost uint64) {
 		dv.AnnouncePrefix(name, n.appFaceID, cost)
 	}
 }
+
+// WithdrawPrefixFromDv withdraws a prefix from the DV router if DV is running.
+// This triggers DV prefix table removal propagation to all neighbors.
+func (n *Node) WithdrawPrefixFromDv(name enc.Name) {
+	n.mu.Lock()
+	dv := n.dvRouter
+	n.mu.Unlock()
+	if dv != nil {
+		dv.WithdrawPrefix(name, n.appFaceID)
+	}
+}

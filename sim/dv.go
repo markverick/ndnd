@@ -154,3 +154,39 @@ func (sd *SimDvRouter) AnnouncePrefix(name enc.Name, faceId uint64, cost uint64)
 	// triggering same-face loop prevention.
 	eng.DispatchInterest(interest)
 }
+
+// WithdrawPrefix sends a readvertise-withdraw Interest to the DV router's
+// management handler, causing it to remove the prefix from all DV neighbors.
+func (sd *SimDvRouter) WithdrawPrefix(name enc.Name, faceId uint64) {
+	eng, ok := sd.engine.(*SimEngine)
+	if !ok {
+		return
+	}
+
+	params := &mgmt.ControlParameters{
+		Val: &mgmt.ControlArgs{
+			Name:   name,
+			FaceId: optional.Some(faceId),
+		},
+	}
+
+	cmd := enc.Name{
+		enc.LOCALHOST,
+		enc.NewGenericComponent("nlsr"),
+		enc.NewGenericComponent("rib"),
+		enc.NewGenericComponent("unregister"),
+		enc.NewGenericBytesComponent(params.Encode().Join()),
+	}
+
+	signer := sig.NewSha256Signer()
+	interest, err := sd.engine.Spec().MakeInterest(cmd, &ndn.InterestConfig{
+		MustBeFresh: true,
+		Nonce:       optional.Some(rand.Uint32()),
+	}, enc.Wire{}, signer)
+	if err != nil {
+		log.Warn(nil, "Failed to encode readvertise-withdraw Interest", "err", err)
+		return
+	}
+
+	eng.DispatchInterest(interest)
+}
