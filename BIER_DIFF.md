@@ -84,11 +84,8 @@ Four logical additions in `processInterest` / `twoPhaseLookup`:
 ### `fw/mgmt/pet.go`
 - `addEgress()` reads `Flags` bit 0 for multicast detection (replaces `Cost==1` convention)
 
-### `.github/workflows/test.yml`
-- CI now builds and uploads both `ndnd` and `svs-chat` binaries for e2e tests
-
 ### `e2e/runner.py`
-- `ensure_local_binaries()` skips building binaries that already exist in `.bin/`
+- `ensure_local_binaries()` skips building binaries that already exist in `.bin/` or PATH
 
 ---
 

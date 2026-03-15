@@ -1,5 +1,6 @@
 import os
 import random
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -25,8 +26,9 @@ def ensure_local_binaries() -> None:
     local_bin.mkdir(parents=True, exist_ok=True)
 
     for name, pkg in [("ndnd", "./cmd/ndnd"), ("svs-chat", "./cmd/svs-chat")]:
-        if not (local_bin / name).exists():
-            subprocess.check_call(["go", "build", "-o", str(local_bin / name), pkg], cwd=repo_root)
+        if (local_bin / name).exists() or shutil.which(name):
+            continue
+        subprocess.check_call(["go", "build", "-o", str(local_bin / name), pkg], cwd=repo_root)
 
     os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
 
