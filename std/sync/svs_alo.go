@@ -28,15 +28,6 @@ type SvsALO struct {
 	// nodePs is the Pub/Sub coordinator for publisher prefixes
 	nodePs SimplePs[SvsPub]
 
-	// outpipe is the channel for delivering data.
-	outpipe chan SvsPub
-	// errpipe is the channel for delivering errors.
-	errpipe chan error
-	// publpipe is the channel for delivering new publishers.
-	publpipe chan enc.Name
-	// stop is the stop signal.
-	stop chan struct{}
-
 	// error callback
 	onError func(error)
 	// publisher callback
@@ -78,11 +69,6 @@ func NewSvsALO(opts SvsAloOpts) (*SvsALO, error) {
 		state:  NewSvMap[svsDataState](0),
 		nodePs: NewSimplePs[SvsPub](),
 
-		outpipe:  make(chan SvsPub, 256),
-		errpipe:  make(chan error, 16),
-		publpipe: make(chan enc.Name, 16),
-		stop:     make(chan struct{}),
-
 		onError:     func(err error) { log.Warn(nil, err.Error()) },
 		onPublisher: nil,
 	}
@@ -104,7 +90,11 @@ func NewSvsALO(opts SvsAloOpts) (*SvsALO, error) {
 	if s.opts.Svs.BootTime == 0 {
 		// This is actually done by the SVS instance itself, but we need
 		// it to tell the SyncDataName to SVS ...
-		s.opts.Svs.BootTime = uint64(time.Now().Unix())
+		nowFunc := s.opts.Svs.NowFunc
+		if nowFunc == nil {
+			nowFunc = time.Now
+		}
+		s.opts.Svs.BootTime = uint64(nowFunc().Unix())
 	}
 
 	// Svs.GroupPrefix is actually the Sync prefix
@@ -193,15 +183,11 @@ func (s *SvsALO) Start() error {
 	if err := s.svs.Start(); err != nil {
 		return err
 	}
-
-	// SVS is stopped when the main loop quits.
-	go s.run()
 	return nil
 }
 
 // Stop stops the SvsALO instance.
 func (s *SvsALO) Stop() error {
-	s.stop <- struct{}{}
 	s.svs.Stop()
 	return nil
 }
@@ -266,32 +252,14 @@ func (s *SvsALO) UnsubscribePublisher(prefix enc.Name) {
 	s.nodePs.Unsubscribe(prefix)
 }
 
-// run is the main loop for the SvsALO instance.
-// Only this thread has interaction with the application.
-func (s *SvsALO) run() {
-	for {
-		select {
-		case <-s.stop:
-			return
-		case pub := <-s.outpipe:
-			for _, subscription := range pub.subcribers {
-				subscription(pub)
-			}
-		case err := <-s.errpipe:
-			s.onError(err)
-		case publ := <-s.publpipe:
-			s.onPublisher(publ)
-		}
-	}
-}
-
 // onSvsUpdate is the handler for new sequence numbers.
 func (s *SvsALO) onSvsUpdate(update SvSyncUpdate) {
-	defer func() {
-		if s.onPublisher != nil {
-			s.publpipe <- update.Name
-		}
-	}()
+	if s.onPublisher != nil {
+		name := update.Name
+		s.opts.Svs.GoFunc(func() {
+			s.onPublisher(name)
+		})
+	}
 
 	s.mutex.Lock()
 	defer s.mutex.Unlock()

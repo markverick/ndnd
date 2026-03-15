@@ -156,7 +156,7 @@ func (s *SvsALO) consumeObject(node enc.Name, boot uint64, seq uint64) {
 				})
 
 				// TODO: exponential backoff
-				time.AfterFunc(2*time.Second, func() {
+				s.opts.Svs.AfterFunc(2*time.Second, func() {
 					s.consumeObject(node, boot, seq)
 				})
 				return
@@ -238,13 +238,16 @@ func (s *SvsALO) queuePub(pub SvsPub) {
 		pub.State = s.instanceState()
 	}
 
-	s.outpipe <- pub
+	s.opts.Svs.GoFunc(func() {
+		for _, subscription := range pub.subcribers {
+			subscription(pub)
+		}
+	})
 }
 
 // queueError queues an error to the application.
 func (s *SvsALO) queueError(err error) {
-	select {
-	case s.errpipe <- err:
-	default:
-	}
+	s.opts.Svs.GoFunc(func() {
+		s.onError(err)
+	})
 }

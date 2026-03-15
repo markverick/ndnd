@@ -7,6 +7,7 @@ import (
 	"github.com/named-data/ndnd/dv/config"
 	"github.com/named-data/ndnd/dv/nfdc"
 	"github.com/named-data/ndnd/dv/table"
+	"github.com/named-data/ndnd/fw/core"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/log"
 	"github.com/named-data/ndnd/std/ndn"
@@ -36,6 +37,19 @@ type Router struct {
 	nfdc *nfdc.NfdMgmtThread
 	// single mutex for all operations
 	mutex sync.Mutex
+
+	// GoFunc dispatches work asynchronously.
+	// In production, this launches a goroutine.
+	// In simulation, this schedules via the simulation clock.
+	GoFunc func(func())
+
+	// NowFunc returns current time. Defaults to time.Now.
+	// In simulation, returns simulation clock time.
+	NowFunc func() time.Time
+
+	// AfterFunc schedules f after d. Returns cancel function.
+	// Defaults to time.AfterFunc wrapper.
+	AfterFunc func(time.Duration, func()) func()
 
 	// channel to stop the DV
 	stop chan bool
@@ -98,18 +112,24 @@ func NewRouter(config *config.Config, engine ndn.Engine) (*Router, error) {
 
 	// Create the DV router
 	dv := &Router{
-		engine: engine,
-		config: config,
-		trust:  trust,
-		client: object.NewClient(engine, store, trust),
-		nfdc:   nfdc.NewNfdMgmtThread(engine),
-		mutex:  sync.Mutex{},
+		engine:  engine,
+		config:  config,
+		trust:   trust,
+		client:  object.NewClient(engine, store, trust),
+		nfdc:    nfdc.NewNfdMgmtThread(engine),
+		mutex:   sync.Mutex{},
+		GoFunc:  func(f func()) { go f() },
+		NowFunc: core.Now,
+		AfterFunc: func(d time.Duration, f func()) func() {
+			t := time.AfterFunc(d, f)
+			return func() { t.Stop() }
+		},
 	}
 
 	// Initialize advertisement module
 	dv.advert = advertModule{
 		dv:       dv,
-		bootTime: uint64(time.Now().Unix()),
+		bootTime: max(uint64(core.Now().Unix()), 1),
 		seq:      0,
 		objDir:   storage.NewMemoryFifoDir(32), // keep last few advertisements
 	}
@@ -153,7 +173,7 @@ func (dv *Router) Start() (err error) {
 	defer dv.client.Stop()
 
 	// Start management thread
-	go dv.nfdc.Start()
+	dv.GoFunc(func() { dv.nfdc.Start() })
 	defer dv.nfdc.Stop()
 
 	// Configure face
@@ -194,6 +214,62 @@ func (dv *Router) Stop() {
 	dv.stop <- true
 }
 
+// Init initializes the DV router without blocking.
+// This is the simulation-compatible variant of Start() — it performs all
+// setup (faces, handlers, sync groups, initial advertisement) but returns
+// immediately instead of entering a ticker-driven select loop.
+// The caller is responsible for periodically calling RunHeartbeat() and
+// RunDeadcheck() using the simulation clock.
+func (dv *Router) Init() error {
+	log.Info(dv, "Initializing DV router (sim)", "version", utils.NDNdVersion)
+
+	// Start object client
+	dv.client.Start()
+
+	// Register interest handlers
+	if err := dv.register(); err != nil {
+		return err
+	}
+
+	// Start sync groups
+	dv.pfxSvs.Start()
+
+	// Add self to the RIB and make initial advertisement
+	dv.rib.Set(dv.config.RouterName(), dv.config.RouterName(), 0)
+	dv.advert.generate()
+
+	// Initialize prefix table
+	dv.pfx.Reset()
+
+	return nil
+}
+
+// RunHeartbeat sends a sync Interest to all neighbors.
+// In production this is driven by time.Ticker; in simulation it is
+// called by the simulation clock scheduler.
+func (dv *Router) RunHeartbeat() {
+	dv.advert.sendSyncInterest()
+}
+
+// RunDeadcheck checks for dead neighbors and prunes routes.
+// In production this is driven by time.Ticker; in simulation it is
+// called by the simulation clock scheduler.
+func (dv *Router) RunDeadcheck() {
+	dv.checkDeadNeighbors()
+}
+
+// Cleanup tears down the DV router (simulation variant of deferred cleanup in Start).
+func (dv *Router) Cleanup() {
+	dv.pfxSvs.Stop()
+	dv.client.Stop()
+	log.Info(dv, "Cleaned up DV router (sim)")
+}
+
+// Nfdc returns the NFD management thread.
+func (dv *Router) Nfdc() *nfdc.NfdMgmtThread {
+	return dv.nfdc
+}
+
 // Configure the face to forwarder.
 func (dv *Router) configureFace() (err error) {
 	// Enable local fields on face. This includes incoming face indication.
@@ -215,7 +291,7 @@ func (dv *Router) register() (err error) {
 	// Advertisement Sync (active)
 	err = dv.engine.AttachHandler(dv.config.AdvertisementSyncActivePrefix(),
 		func(args ndn.InterestHandlerArgs) {
-			go dv.advert.OnSyncInterest(args, true)
+			dv.GoFunc(func() { dv.advert.OnSyncInterest(args, true) })
 		})
 	if err != nil {
 		return err
@@ -224,7 +300,7 @@ func (dv *Router) register() (err error) {
 	// Advertisement Sync (passive)
 	err = dv.engine.AttachHandler(dv.config.AdvertisementSyncPassivePrefix(),
 		func(args ndn.InterestHandlerArgs) {
-			go dv.advert.OnSyncInterest(args, false)
+			dv.GoFunc(func() { dv.advert.OnSyncInterest(args, false) })
 		})
 	if err != nil {
 		return err
@@ -233,7 +309,7 @@ func (dv *Router) register() (err error) {
 	// Router management
 	err = dv.engine.AttachHandler(dv.config.MgmtPrefix(),
 		func(args ndn.InterestHandlerArgs) {
-			go dv.mgmtOnInterest(args)
+			dv.GoFunc(func() { dv.mgmtOnInterest(args) })
 		})
 	if err != nil {
 		return err
@@ -355,6 +431,9 @@ func (dv *Router) createPrefixTable() {
 			Client:      dv.client,
 			GroupPrefix: dv.config.PrefixTableGroupPrefix(),
 			BootTime:    dv.advert.bootTime,
+			GoFunc:      func(f func()) { dv.GoFunc(f) },
+			NowFunc:     func() time.Time { return dv.NowFunc() },
+			AfterFunc:   func(d time.Duration, f func()) func() { return dv.AfterFunc(d, f) },
 		},
 		Snapshot: &ndn_sync.SnapshotNodeLatest{
 			Client: dv.client,

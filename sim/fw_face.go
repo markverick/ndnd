@@ -52,14 +52,14 @@ func (f *DispatchFace) String() string {
 	return fmt.Sprintf("sim-face-%d", f.faceID)
 }
 
-func (f *DispatchFace) SetFaceID(id uint64) { f.faceID = id }
-func (f *DispatchFace) FaceID() uint64      { return f.faceID }
-func (f *DispatchFace) LocalURI() *defn.URI  { return f.localURI }
-func (f *DispatchFace) RemoteURI() *defn.URI { return f.remoteURI }
-func (f *DispatchFace) Scope() defn.Scope    { return f.scope }
+func (f *DispatchFace) SetFaceID(id uint64)     { f.faceID = id }
+func (f *DispatchFace) FaceID() uint64          { return f.faceID }
+func (f *DispatchFace) LocalURI() *defn.URI     { return f.localURI }
+func (f *DispatchFace) RemoteURI() *defn.URI    { return f.remoteURI }
+func (f *DispatchFace) Scope() defn.Scope       { return f.scope }
 func (f *DispatchFace) LinkType() defn.LinkType { return f.linkType }
-func (f *DispatchFace) MTU() int             { return defn.MaxNDNPacketSize }
-func (f *DispatchFace) State() defn.State    { return f.state }
+func (f *DispatchFace) MTU() int                { return defn.MaxNDNPacketSize }
+func (f *DispatchFace) State() defn.State       { return f.state }
 
 // SendPacket is called by fw.Thread when it wants to send a packet out this face.
 // It encodes the packet as an LP frame (with PIT token if present) and invokes
@@ -78,6 +78,13 @@ func (f *DispatchFace) SendPacket(out dispatch.OutPkt) {
 		Fragment: pkt.Raw,
 		PitToken: out.PitToken,
 	}
+
+	// Include IncomingFaceId for local (app) faces so DV handlers
+	// can identify which link face the Interest originally arrived on.
+	if f.scope == defn.Local && out.InFace > 0 {
+		lpFrag.IncomingFaceId.Set(out.InFace)
+	}
+
 	lpPkt := defn.FwPacket{LpPacket: lpFrag}
 	wire := lpPkt.Encode()
 	if wire == nil {

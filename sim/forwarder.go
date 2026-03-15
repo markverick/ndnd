@@ -120,6 +120,11 @@ func (fwd *SimForwarder) AddRoute(name enc.Name, faceID uint64, cost uint64) {
 	fwd.thread.Fib().InsertNextHopEnc(name, faceID, cost)
 }
 
+// SetStrategy sets the forwarding strategy for a prefix.
+func (fwd *SimForwarder) SetStrategy(prefix enc.Name, strategy enc.Name) {
+	fwd.thread.Fib().SetStrategyEnc(prefix, strategy)
+}
+
 // RemoveRoute removes a FIB entry.
 func (fwd *SimForwarder) RemoveRoute(name enc.Name, faceID uint64) {
 	fwd.thread.Fib().RemoveNextHopEnc(name, faceID)

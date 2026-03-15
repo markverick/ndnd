@@ -23,6 +23,9 @@ type NfdMgmtThread struct {
 	channel chan NfdMgmtCmd
 	// stop the management thread
 	stop chan bool
+	// If true, Exec() runs commands synchronously instead of queuing.
+	// Used in simulation where goroutines are not available.
+	Synchronous bool
 }
 
 // (AI GENERATED DESCRIPTION): Creates a new NfdMgmtThread with the given ndn.Engine, initializing its command channel (buffered with 4096) and stop channel for thread control.
@@ -67,7 +70,16 @@ func (m *NfdMgmtThread) Stop() {
 }
 
 // (AI GENERATED DESCRIPTION): Queues a management command to the NfdMgmtThread by sending it through its command channel.
+// In synchronous mode, the command is executed immediately on the caller's thread.
 func (m *NfdMgmtThread) Exec(mgmt_cmd NfdMgmtCmd) {
+	if m.Synchronous {
+		_, err := m.engine.ExecMgmtCmd(mgmt_cmd.Module, mgmt_cmd.Cmd, mgmt_cmd.Args)
+		if err != nil {
+			log.Error(m, "Forwarder command failed (sync)", "err", err,
+				"module", mgmt_cmd.Module, "cmd", mgmt_cmd.Cmd)
+		}
+		return
+	}
 	m.channel <- mgmt_cmd
 }
 

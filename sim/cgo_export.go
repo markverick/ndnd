@@ -95,11 +95,15 @@ func NdndSimInit(
 	scheduleEventCb C.NdndSimScheduleEventFunc,
 	cancelEventCb C.NdndSimCancelEventFunc,
 	getTimeNsCb C.NdndSimGetTimeNsFunc,
+	dataProducedCb C.NdndSimDataProducedFunc,
+	dataReceivedCb C.NdndSimDataReceivedFunc,
 ) {
 	C.setSendPacketCb(sendPacketCb)
 	C.setScheduleEventCb(scheduleEventCb)
 	C.setCancelEventCb(cancelEventCb)
 	C.setGetTimeNsCb(getTimeNsCb)
+	C.setDataProducedCb(dataProducedCb)
+	C.setDataReceivedCb(dataReceivedCb)
 
 	// Override NDNd's clock to use ns-3 simulation time
 	core.NowFunc = func() time.Time {
@@ -123,6 +127,16 @@ func NdndSimCreateNode(nodeId C.uint32_t) C.int {
 
 	// Create node with its own clock
 	node := NewNode(uint32(nodeId), clock)
+
+	// Set the Data received callback so the engine notifies C++
+	if eng, ok := node.Engine().(*SimEngine); ok {
+		nid := nodeId
+		eng.onDataReceived = func(nodeID uint32, dataSize uint32, dataName string) {
+			cName := C.CString(dataName)
+			C.callDataReceived(nid, C.uint32_t(dataSize), cName, C.uint32_t(len(dataName)))
+			C.free(unsafe.Pointer(cName))
+		}
+	}
 
 	globalRuntime.mu.Lock()
 	globalRuntime.nodes[uint32(nodeId)] = node
@@ -240,6 +254,37 @@ func NdndSimFireEvent(nodeId C.uint32_t, eventId C.uint64_t) {
 	clock.FireEvent(EventID(eventId))
 }
 
+//export NdndSimStartDv
+func NdndSimStartDv(nodeId C.uint32_t, networkStr *C.char, networkLen C.int, routerStr *C.char, routerLen C.int) C.int {
+	if globalRuntime == nil {
+		return -1
+	}
+	node := globalRuntime.GetNode(uint32(nodeId))
+	if node == nil {
+		return -1
+	}
+
+	network := C.GoStringN(networkStr, networkLen)
+	router := C.GoStringN(routerStr, routerLen)
+
+	if err := node.StartDv(network, router); err != nil {
+		return -1
+	}
+	return 0
+}
+
+//export NdndSimStopDv
+func NdndSimStopDv(nodeId C.uint32_t) {
+	if globalRuntime == nil {
+		return
+	}
+	node := globalRuntime.GetNode(uint32(nodeId))
+	if node == nil {
+		return
+	}
+	node.StopDv()
+}
+
 //export NdndSimDestroy
 func NdndSimDestroy() {
 	if globalRuntime != nil {
@@ -261,7 +306,7 @@ func NdndSimGetAppFaceId(nodeId C.uint32_t) C.uint64_t {
 }
 
 //export NdndSimRegisterProducer
-func NdndSimRegisterProducer(nodeId C.uint32_t, prefixStr *C.char, prefixLen C.int, payloadSize C.uint32_t) C.int {
+func NdndSimRegisterProducer(nodeId C.uint32_t, prefixStr *C.char, prefixLen C.int, payloadSize C.uint32_t, freshnessMs C.uint32_t) C.int {
 	if globalRuntime == nil {
 		return -1
 	}
@@ -278,16 +323,20 @@ func NdndSimRegisterProducer(nodeId C.uint32_t, prefixStr *C.char, prefixLen C.i
 
 	engine := node.Engine()
 	pSize := int(payloadSize)
+	freshness := time.Duration(freshnessMs) * time.Millisecond
 	dataSigner := sig.NewSha256Signer()
 
 	handler := func(args ndn.InterestHandlerArgs) {
 		content := make([]byte, pSize)
+		dataConfig := &ndn.DataConfig{
+			ContentType: optional.Some(ndn.ContentTypeBlob),
+		}
+		if freshness > 0 {
+			dataConfig.Freshness = optional.Some(freshness)
+		}
 		data, err := engine.Spec().MakeData(
 			args.Interest.Name(),
-			&ndn.DataConfig{
-				ContentType: optional.Some(ndn.ContentTypeBlob),
-				Freshness:   optional.Some(4 * time.Second),
-			},
+			dataConfig,
 			enc.Wire{content},
 			dataSigner,
 		)
@@ -295,10 +344,16 @@ func NdndSimRegisterProducer(nodeId C.uint32_t, prefixStr *C.char, prefixLen C.i
 			return
 		}
 		args.Reply(data.Wire)
+		// Notify C++ that Data was produced
+		C.callDataProduced(nodeId, C.uint32_t(data.Wire.Length()))
 	}
 
 	if err := engine.AttachHandler(name, handler); err != nil {
 		return -1
 	}
+
+	// If DV is running, announce this prefix so it propagates to neighbors
+	node.AnnouncePrefixToDv(name, 0)
+
 	return 0
 }

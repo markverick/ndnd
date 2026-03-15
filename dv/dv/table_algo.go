@@ -62,7 +62,7 @@ func (dv *Router) updateRib(ns *table.NeighborState) {
 
 	// If advert changed, increment sequence number
 	if dirty {
-		go dv.postUpdateRib()
+		dv.GoFunc(dv.postUpdateRib)
 	}
 }
 
@@ -87,7 +87,7 @@ func (dv *Router) checkDeadNeighbors() {
 	}
 
 	if dirty {
-		go dv.postUpdateRib()
+		dv.GoFunc(dv.postUpdateRib)
 	}
 }
 
@@ -169,7 +169,7 @@ func (dv *Router) updatePrefixSubs() {
 				// Both snapshots and normal data are handled the same way
 				if dirty := dv.pfx.Apply(sp.Content); dirty {
 					// Update the local fib if prefix table changed
-					go dv.updateFib() // expensive
+					dv.GoFunc(dv.updateFib) // expensive
 				}
 			})
 		}

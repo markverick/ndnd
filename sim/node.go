@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/named-data/ndnd/dv/config"
 	"github.com/named-data/ndnd/fw/defn"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/ndn"
@@ -25,6 +26,9 @@ type Node struct {
 	appFace   *SimFace
 	appTimer  *SimTimer
 	appFaceID uint64
+
+	// DV router for this node (nil if not enabled)
+	dvRouter *SimDvRouter
 
 	// Mapping from ns-3 interface index to forwarder face ID
 	ifaceFaces map[uint32]uint64
@@ -53,7 +57,7 @@ func NewNode(id uint32, clock Clock) *Node {
 		n.Forwarder.ReceivePacket(n.appFaceID, frame)
 	}, true)
 
-	n.appEngine = NewSimEngine(n.appFace, n.appTimer)
+	n.appEngine = NewSimEngine(n.appFace, n.appTimer, id, nil)
 
 	return n
 }
@@ -69,6 +73,12 @@ func (n *Node) Start() error {
 		n.appFace.Receive(frame)
 	})
 
+	// Set forwarder and appFaceID on the engine for ExecMgmtCmd
+	if eng, ok := n.appEngine.(*SimEngine); ok {
+		eng.forwarder = n.Forwarder
+		eng.appFaceID = n.appFaceID
+	}
+
 	n.Forwarder.Start()
 
 	// Start the engine (this also opens the app face)
@@ -83,6 +93,11 @@ func (n *Node) Start() error {
 func (n *Node) Stop() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+
+	if n.dvRouter != nil {
+		n.dvRouter.Stop()
+		n.dvRouter = nil
+	}
 
 	n.appEngine.Stop()
 	n.appFace.Close()
@@ -166,4 +181,80 @@ func (n *Node) ID() uint32 {
 // AppFaceID returns the face ID for the internal application face.
 func (n *Node) AppFaceID() uint64 {
 	return n.appFaceID
+}
+
+// StartDv creates and starts a DV router on this node.
+// network is the network prefix (e.g., "/ndn"), routerName is the full
+// router name (e.g., "/ndn/node0"). The DV router discovers neighbors
+// dynamically via sync Interests on all connected faces.
+func (n *Node) StartDv(network, router string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	cfg := config.DefaultConfig()
+	cfg.Network = network
+	cfg.Router = router
+	cfg.KeyChainUri = "insecure"
+	// Faster convergence for simulation
+	cfg.AdvertisementSyncInterval_ms = 1000
+	cfg.RouterDeadInterval_ms = 5000
+
+	sdv, err := NewSimDvRouter(n.clock, n.appEngine, cfg)
+	if err != nil {
+		return err
+	}
+
+	if err := sdv.Start(); err != nil {
+		return err
+	}
+
+	// Register DV sync prefixes on all link faces for neighbor reachability.
+	// This replaces the production DV's createFaces() which creates and
+	// configures neighbor faces — in simulation, faces already exist.
+	syncActivePrefix := cfg.AdvertisementSyncActivePrefix()
+	pfxSyncGroup := cfg.PrefixTableGroupPrefix()
+	for _, faceID := range n.ifaceFaces {
+		n.Forwarder.AddRoute(syncActivePrefix, faceID, 1)
+		n.Forwarder.AddRoute(pfxSyncGroup, faceID, 1)
+	}
+
+	// Also add app face at the ACT prefix so incoming sync Interests from
+	// neighbors can be delivered to the DV handler. Without this, the ACT
+	// node in the FIB (link faces only) shadows the parent ADS node (app
+	// face), causing /localhop scope enforcement to drop all nexthops.
+	n.Forwarder.AddRoute(syncActivePrefix, n.appFaceID, 0)
+
+	// Set multicast strategy for sync prefixes so Interests go to ALL neighbors.
+	multicastStrategy := config.MulticastStrategy.Append(enc.NewVersionComponent(1))
+	n.Forwarder.SetStrategy(cfg.AdvertisementSyncPrefix(), multicastStrategy)
+	n.Forwarder.SetStrategy(pfxSyncGroup, multicastStrategy)
+
+	n.dvRouter = sdv
+	return nil
+}
+
+// StopDv stops the DV router if running.
+func (n *Node) StopDv() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.dvRouter != nil {
+		n.dvRouter.Stop()
+		n.dvRouter = nil
+	}
+}
+
+// DvRouter returns the DV router wrapper, or nil if not started.
+func (n *Node) DvRouter() *SimDvRouter {
+	return n.dvRouter
+}
+
+// AnnouncePrefixToDv announces a prefix to the DV router if DV is running.
+// This triggers DV prefix table propagation to all neighbors.
+func (n *Node) AnnouncePrefixToDv(name enc.Name, cost uint64) {
+	n.mu.Lock()
+	dv := n.dvRouter
+	n.mu.Unlock()
+	if dv != nil {
+		dv.AnnouncePrefix(name, n.appFaceID, cost)
+	}
 }

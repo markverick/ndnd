@@ -21,13 +21,12 @@ type SvSync struct {
 	o SvSyncOpts
 
 	running atomic.Bool
-	stop    chan struct{}
-	ticker  *time.Ticker
 
-	mutex  sync.Mutex
-	state  SvMap[uint64]
-	mtime  map[string]time.Time
-	prefix enc.Name
+	mutex       sync.Mutex
+	state       SvMap[uint64]
+	mtime       map[string]time.Time
+	prefix      enc.Name
+	timerCancel func()
 
 	// Suppression state
 	suppress bool
@@ -36,9 +35,6 @@ type SvSync struct {
 	// Buffered wires (passive mode)
 	passiveWiresSv     SvMap[enc.Wire]
 	passiveWillPersist atomic.Bool
-
-	// Channel for incoming state vectors
-	recvSv chan svSyncRecvSvArgs
 
 	// cancellation for face hook
 	faceCancel func()
@@ -66,6 +62,14 @@ type SvSyncOpts struct {
 	PeriodicTimeout time.Duration
 	// Suppression period for ignoring outdated Sync Interests (default 200ms)
 	SuppressionPeriod time.Duration
+
+	// GoFunc dispatches work asynchronously. Defaults to go f().
+	GoFunc func(func())
+	// NowFunc returns current time. Defaults to time.Now.
+	NowFunc func() time.Time
+	// AfterFunc schedules f to run after d. Returns a cancel function.
+	// Defaults to time.AfterFunc.
+	AfterFunc func(time.Duration, func()) func()
 
 	// Passive mode does not send sign Sync Interests
 	Passive bool
@@ -110,8 +114,20 @@ func NewSvSync(opts SvSyncOpts) *SvSync {
 	}
 
 	// Set default options
+	if opts.GoFunc == nil {
+		opts.GoFunc = func(f func()) { go f() }
+	}
+	if opts.NowFunc == nil {
+		opts.NowFunc = time.Now
+	}
+	if opts.AfterFunc == nil {
+		opts.AfterFunc = func(d time.Duration, f func()) func() {
+			t := time.AfterFunc(d, f)
+			return func() { t.Stop() }
+		}
+	}
 	if opts.BootTime == 0 {
-		opts.BootTime = uint64(time.Now().Unix())
+		opts.BootTime = uint64(opts.NowFunc().Unix())
 	}
 	if opts.PeriodicTimeout == 0 {
 		opts.PeriodicTimeout = 30 * time.Second
@@ -127,8 +143,6 @@ func NewSvSync(opts SvSyncOpts) *SvSync {
 		o: opts,
 
 		running: atomic.Bool{},
-		stop:    make(chan struct{}),
-		ticker:  time.NewTicker(opts.PeriodicTimeout),
 
 		mutex:  sync.Mutex{},
 		state:  initialState,
@@ -140,8 +154,6 @@ func NewSvSync(opts SvSyncOpts) *SvSync {
 
 		passiveWiresSv:     NewSvMap[enc.Wire](0),
 		passiveWillPersist: atomic.Bool{},
-
-		recvSv: make(chan svSyncRecvSvArgs, 128),
 
 		faceCancel: func() {},
 	}
@@ -162,53 +174,51 @@ func (s *SvSync) Start() (err error) {
 		return err
 	}
 
-	go s.main()
-
-	return nil
-}
-
-// (AI GENERATED DESCRIPTION): Runs the SvSync event loop: it performs the initial sync (or passive load), registers periodic timer ticks and face‑up callbacks, processes received state vectors, and exits cleanly when signalled to stop.
-func (s *SvSync) main() {
-	// Cleanup on exit
-	defer s.o.Client.Engine().DetachHandler(s.prefix)
-
-	// Set running state
 	s.running.Store(true)
-	defer s.running.Store(false)
 
-	// Notify everyone when we are back online
 	s.faceCancel = s.o.Client.Engine().Face().OnUp(func() {
-		time.AfterFunc(100*time.Millisecond, s.sendSyncInterest)
+		s.o.AfterFunc(100*time.Millisecond, s.sendSyncInterest)
 	})
-	defer s.faceCancel()
 
 	if s.o.Passive {
-		// [Passive] Load the buffered wires from persistence
-		// This will send the initial Sync Interest
-		go s.loadPassiveWires()
+		s.o.GoFunc(s.loadPassiveWires)
 	} else {
-		// Send the initial Sync Interest
-		go s.sendSyncInterest()
+		s.o.GoFunc(s.sendSyncInterest)
 	}
 
-	for {
-		select {
-		case <-s.ticker.C:
-			s.timerExpired()
-		case sv := <-s.recvSv:
-			s.onReceiveStateVector(sv)
-		case <-s.stop:
-			return
-		}
-	}
+	s.mutex.Lock()
+	s.scheduleTimer(s.getPeriodicTimeout())
+	s.mutex.Unlock()
+
+	return nil
 }
 
 // Stop the SV Sync instance.
 func (s *SvSync) Stop() error {
-	s.ticker.Stop()
+	s.running.Store(false)
+	s.mutex.Lock()
+	if s.timerCancel != nil {
+		s.timerCancel()
+		s.timerCancel = nil
+	}
+	s.mutex.Unlock()
+	s.faceCancel()
+	s.o.Client.Engine().DetachHandler(s.prefix)
 	s.persistPassiveWires()
-	s.stop <- struct{}{}
 	return nil
+}
+
+// scheduleTimer schedules the periodic/suppression timer callback.
+// Must be called while holding s.mutex.
+func (s *SvSync) scheduleTimer(d time.Duration) {
+	if s.timerCancel != nil {
+		s.timerCancel()
+	}
+	s.timerCancel = s.o.AfterFunc(d, func() {
+		if s.running.Load() {
+			s.timerExpired()
+		}
+	})
 }
 
 // GetSeqNo returns the sequence number for a name.
@@ -240,7 +250,7 @@ func (s *SvSync) SetSeqNo(name enc.Name, seqNo uint64) error {
 	// [Spec] When the node generates a new publication,
 	// immediately emit a Sync Interest
 	s.state.Set(hash, s.o.BootTime, seqNo)
-	go s.sendSyncInterest()
+	s.o.GoFunc(s.sendSyncInterest)
 
 	return nil
 }
@@ -262,7 +272,7 @@ func (s *SvSync) IncrSeqNo(name enc.Name) uint64 {
 
 	// [Spec] When the node generates a new publication,
 	// immediately emit a Sync Interest
-	go s.sendSyncInterest()
+	s.o.GoFunc(s.sendSyncInterest)
 
 	return entry
 }
@@ -304,7 +314,7 @@ func (s *SvSync) onReceiveStateVector(args svSyncRecvSvArgs) {
 	isOutdated := false
 	canDrop := true
 	recvSv := NewSvMap[uint64](len(args.sv.Entries))
-	now := time.Now()
+	now := s.o.NowFunc()
 
 	for _, node := range args.sv.Entries {
 		hash := node.Name.TlvStr()
@@ -377,7 +387,7 @@ func (s *SvSync) onReceiveStateVector(args svSyncRecvSvArgs) {
 
 	// [Passive] Persist the buffered wires with throttling
 	if s.o.Passive && !s.passiveWillPersist.Swap(true) {
-		time.AfterFunc(5*time.Second, s.persistPassiveWires)
+		s.o.AfterFunc(5*time.Second, s.persistPassiveWires)
 	}
 
 	if !isOutdated {
@@ -397,7 +407,7 @@ func (s *SvSync) onReceiveStateVector(args svSyncRecvSvArgs) {
 
 	// [Spec] When entering Suppression State, reset
 	// the Sync Interest timer to SuppressionTimeout
-	s.ticker.Reset(s.getSuppressionTimeout())
+	s.scheduleTimer(s.getSuppressionTimeout())
 }
 
 // (AI GENERATED DESCRIPTION): Handles a timer expiry by checking suppression state, potentially transitioning to steady state, and asynchronously sending a Sync Interest with the current local state vector.
@@ -418,7 +428,7 @@ func (s *SvSync) timerExpired() {
 
 	// [Spec] On expiration of timer emit a Sync Interest
 	// with the current local state vector.
-	go s.sendSyncInterest()
+	s.o.GoFunc(s.sendSyncInterest)
 }
 
 // (AI GENERATED DESCRIPTION): Sends a sync Interest: if passive mode is enabled, it publishes all buffered state updates without duplicates; otherwise, it encodes the current state vector into a wire and transmits it, provided the sync service is running.
@@ -541,10 +551,13 @@ func (s *SvSync) onSyncData(dataWire enc.Wire) {
 				return
 			}
 
-			s.recvSv <- svSyncRecvSvArgs{
+			args := svSyncRecvSvArgs{
 				sv:   params.StateVector,
 				data: dataWire,
 			}
+			s.o.GoFunc(func() {
+				s.onReceiveStateVector(args)
+			})
 		},
 	})
 }
@@ -553,7 +566,7 @@ func (s *SvSync) onSyncData(dataWire enc.Wire) {
 func (s *SvSync) enterSteadyState() {
 	s.suppress = false
 	// [Spec] Steady state: Reset Sync Interest timer to PeriodicTimeout
-	s.ticker.Reset(s.getPeriodicTimeout())
+	s.scheduleTimer(s.getPeriodicTimeout())
 }
 
 // (AI GENERATED DESCRIPTION): Returns a duration uniformly randomized within ±10% of the configured periodic timeout.
@@ -661,5 +674,5 @@ func (s *SvSync) loadPassiveWires() {
 	}
 
 	// This is hacky but pragmatic - wait for the state to be processed
-	time.AfterFunc(500*time.Millisecond, s.sendSyncInterest)
+	s.o.AfterFunc(500*time.Millisecond, s.sendSyncInterest)
 }

@@ -33,7 +33,7 @@ func (a *advertModule) generate() {
 	a.objDir.Evict(a.dv.client)
 
 	// Notify neighbors with sync for new advertisement
-	go a.sendSyncInterest()
+	a.dv.GoFunc(func() { a.sendSyncInterest() })
 }
 
 // (AI GENERATED DESCRIPTION): Fetches a neighbor’s DV advertisement Data packet (retrying on error) and invokes `dataHandler` with its content when the neighbor’s boot time and sequence number match the expected values.
@@ -56,14 +56,14 @@ func (a *advertModule) dataFetch(nName enc.Name, bootTime uint64, seqNo uint64) 
 	a.dv.client.Consume(advName, func(state ndn.ConsumeState) {
 		if err := state.Error(); err != nil {
 			log.Warn(a, "Failed to fetch advertisement", "name", state.Name(), "err", err)
-			time.AfterFunc(1*time.Second, func() {
+			a.dv.engine.Timer().Schedule(1*time.Second, func() {
 				a.dataFetch(nName, bootTime, seqNo)
 			})
 			return
 		}
 
 		// Process the advertisement
-		go a.dataHandler(nName, seqNo, state.Content())
+		a.dv.GoFunc(func() { a.dataHandler(nName, seqNo, state.Content()) })
 	})
 }
 
@@ -92,5 +92,5 @@ func (a *advertModule) dataHandler(nName enc.Name, seqNo uint64, data enc.Wire) 
 
 	// Update the local advertisement list
 	ns.Advert = advert
-	go a.dv.updateRib(ns)
+	a.dv.GoFunc(func() { a.dv.updateRib(ns) })
 }

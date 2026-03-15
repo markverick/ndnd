@@ -6,6 +6,7 @@ import (
 	"github.com/named-data/ndnd/dv/config"
 	"github.com/named-data/ndnd/dv/nfdc"
 	"github.com/named-data/ndnd/dv/tlv"
+	"github.com/named-data/ndnd/fw/core"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/log"
 	mgmt "github.com/named-data/ndnd/std/ndn/mgmt_2022"
@@ -80,7 +81,7 @@ func (nt *NeighborTable) Add(name enc.Name) *NeighborState {
 		AdvertSeq: 0,
 		Advert:    nil,
 
-		lastSeen: time.Now(),
+		lastSeen: core.Now(),
 		faceId:   0,
 	}
 	nt.neighbors[name.Hash()] = neighbor
@@ -107,7 +108,7 @@ func (nt *NeighborTable) GetAll() []*NeighborState {
 
 // (AI GENERATED DESCRIPTION): Determines whether a neighbor is considered dead by comparing the time elapsed since its last seen timestamp to the router’s configured dead interval.
 func (ns *NeighborState) IsDead() bool {
-	return time.Since(ns.lastSeen) > ns.nt.config.RouterDeadInterval()
+	return core.Now().Sub(ns.lastSeen) > ns.nt.config.RouterDeadInterval()
 }
 
 // Call this when a ping is received from a face.
@@ -123,7 +124,7 @@ func (ns *NeighborState) RecvPing(faceId uint64, active bool) (error, bool) {
 	// Update last seen time for neighbor
 	// Note that we skip this when the face is active and the ping is passive.
 	// This is because we want to detect if the active face is removed.
-	ns.lastSeen = time.Now()
+	ns.lastSeen = core.Now()
 
 	// If face ID has changed, re-register face.
 	if ns.faceId != faceId {
