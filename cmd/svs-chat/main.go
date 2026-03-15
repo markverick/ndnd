@@ -49,7 +49,7 @@ func main() {
 	defer client.Stop()
 
 	syncPrefix := groupPrefix.Append(enc.NewKeywordComponent("svs"))
-	client.AnnouncePrefix(ndn.Announcement{Name: syncPrefix, Expose: true, Cost: 1})
+	client.AnnouncePrefix(ndn.Announcement{Name: syncPrefix, Expose: true, Multicast: true})
 
 	dataPrefix := groupPrefix.Append(nodeName...)
 	client.AnnouncePrefix(ndn.Announcement{Name: dataPrefix, Expose: true})

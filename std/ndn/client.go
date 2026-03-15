@@ -182,6 +182,8 @@ type Announcement struct {
 	Cost uint64
 	// Expose the prefix to the global network.
 	Expose bool
+	// Multicast marks this as a Sync group prefix for BIER multicast.
+	Multicast bool
 	// OnError is called when an error occurs.
 	// It may be called multiple times, e.g. if the face is reopened.
 	OnError func(error)

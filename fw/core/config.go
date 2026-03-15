@@ -169,6 +169,7 @@ type Config struct {
 	} `json:"tables"`
 }
 
+// (AI GENERATED DESCRIPTION): Creates and returns a `Config` object pre‑populated with default settings for core parameters, face types, forwarding, management, and table options.
 func DefaultConfig() *Config {
 	c := &Config{}
 	c.Core.LogLevel = "INFO"

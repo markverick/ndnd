@@ -30,7 +30,7 @@ import (
 // topo represents a simulated BIER network with N routers (IDs 0..N-1).
 type topo struct {
 	n    int
-	adj  [][]int      // undirected adjacency list
+	adj  [][]int         // undirected adjacency list
 	bift []*fw.BiftState // per-router BIFT (index == router ID == BFR-ID)
 }
 
@@ -108,9 +108,9 @@ func (t *topo) buildBitstring(ids ...int) []byte {
 
 // topoSimResult is returned by simulate.
 type topoSimResult struct {
-	delivered    map[int]bool // routers that got local delivery
-	packetsSent  int          // total number of forwarded copies
-	hopCounts    map[int]int  // router → hop distance from BFIR
+	delivered   map[int]bool // routers that got local delivery
+	packetsSent int          // total number of forwarded copies
+	hopCounts   map[int]int  // router → hop distance from BFIR
 }
 
 // simulate injects a BIER interest at srcRouter with bitstring bs and runs
@@ -1384,7 +1384,7 @@ func TestBierMultiSourceInjection(t *testing.T) {
 		bfers := []int{12, 7, 17} // center + two edge nodes
 		bs := g.buildBitstring(bfers...)
 
-		corners := []int{0, cols - 1, (rows-1)*cols, rows*cols - 1}
+		corners := []int{0, cols - 1, (rows - 1) * cols, rows*cols - 1}
 		for _, corner := range corners {
 			res := g.simulate(corner, bs)
 			assertDeliveredExactly(t, res, bfers...)
@@ -1392,7 +1392,7 @@ func TestBierMultiSourceInjection(t *testing.T) {
 	})
 
 	t.Run("Binary tree depth-4: inject from multiple leaves, deliver to root", func(t *testing.T) {
-		g := buildBinaryTree(4) // 15 nodes; leaves=7..14
+		g := buildBinaryTree(4)   // 15 nodes; leaves=7..14
 		bs := g.buildBitstring(0) // only root is BFER
 
 		for _, leaf := range []int{7, 10, 14} {

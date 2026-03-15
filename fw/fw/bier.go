@@ -212,9 +212,9 @@ func (b *BiftState) RebuildFbm() {
 		"entries", len(b.entries), "faces", len(faceGroups))
 }
 
-// BuildFromFibPet rebuilds the BIFT from the current FIB and PET state.
+// BuildFromFib rebuilds the BIFT from the current FIB state.
 // For each known router (registered via DV), looks up the FIB to find next hops.
-func (b *BiftState) BuildFromFibPet() {
+func (b *BiftState) BuildFromFib() {
 	b.mu.RLock()
 	entries := make(map[int]*BiftEntry, len(b.entries))
 	for k, v := range b.entries {

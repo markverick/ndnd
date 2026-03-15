@@ -47,12 +47,16 @@ func (c *Client) announcePrefix_(args ndn.Announcement) {
 	hasLocalForwarder := c.engine.Face().IsLocal()
 	useLocalRouting := hasLocalForwarder && args.Expose && c.preferLocalRouting
 	if useLocalRouting {
+		ctrlArgs := &mgmt.ControlArgs{
+			Name: args.Name,
+			Cost: optional.Some(args.Cost),
+		}
+		if args.Multicast {
+			ctrlArgs.Flags = optional.Some(uint64(1))
+		}
 		_, err := mgmt.ExecServiceCmd(
 			c.engine, true, "dv", "prefix", "announce",
-			&mgmt.ControlArgs{
-				Name: args.Name,
-				Cost: optional.Some(args.Cost),
-			},
+			ctrlArgs,
 			&ndn.InterestConfig{
 				Lifetime:    optional.Some(commandTimeout),
 				Nonce:       utils.ConvertNonce(c.engine.Timer().Nonce()),

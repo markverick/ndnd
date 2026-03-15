@@ -4,8 +4,8 @@ import (
 	"sync"
 	"testing"
 
-	fw "github.com/named-data/ndnd/fw/fw"
 	"github.com/named-data/ndnd/fw/core"
+	fw "github.com/named-data/ndnd/fw/fw"
 	"github.com/named-data/ndnd/fw/table"
 	enc "github.com/named-data/ndnd/std/encoding"
 )
@@ -293,16 +293,16 @@ func TestBiftEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("Multiple calls to BuildFromFibPet do not corrupt state", func(t *testing.T) {
-		// Calling BuildFromFibPet requires FibStrategyTable to be initialized.
+	t.Run("Multiple calls to BuildFromFib do not corrupt state", func(t *testing.T) {
+		// Calling BuildFromFib requires FibStrategyTable to be initialized.
 		// Use table.Initialize() to set it up with the default config.
 		table.Initialize()
 
 		b := &fw.BiftState{}
 		r := enc.Name{enc.NewGenericComponent("r")}
 		b.RegisterRouter(r, 0)
-		b.BuildFromFibPet() // FIB empty → no next hops resolved, no panic
-		b.BuildFromFibPet() // second call also safe
+		b.BuildFromFib() // FIB empty → no next hops resolved, no panic
+		b.BuildFromFib() // second call also safe
 	})
 }
 
@@ -353,7 +353,6 @@ func TestBiftConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 }
-
 
 func TestBiftBuildBierBitStringMixed(t *testing.T) {
 	b := &fw.BiftState{}

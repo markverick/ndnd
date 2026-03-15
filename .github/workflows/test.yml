@@ -18,7 +18,9 @@ jobs:
           go-version-file: go.mod
 
       - name: Build
-        run: make
+        run: |
+          make
+          CGO_ENABLED=0 go build -o svs-chat ./cmd/svs-chat
 
       - name: Test
         run: make test
@@ -26,7 +28,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ndnd
-          path: ndnd
+          path: |
+            ndnd
+            svs-chat
 
   lint:
     runs-on: ubuntu-latest
@@ -63,13 +67,13 @@ jobs:
           name: ndnd
           path: /usr/bin/
 
-      - name: Mark ndnd as executable
-        run: chmod +x /usr/bin/ndnd
+      - name: Mark binaries as executable
+        run: chmod +x /usr/bin/ndnd /usr/bin/svs-chat
 
-      - name: Copy ndnd to e2e's bin folder
+      - name: Copy binaries to e2e's bin folder
         run: |
           mkdir .bin/
-          cp /usr/bin/ndnd .bin/
+          cp /usr/bin/ndnd /usr/bin/svs-chat .bin/
 
       - name: Run e2e tests
         run: make e2e

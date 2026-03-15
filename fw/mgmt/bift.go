@@ -88,8 +88,8 @@ func (b *BiftModule) rebuild(interest *Interest) {
 		return
 	}
 
-	fw.Bift.BuildFromFibPet()
-	core.Log.Info(b, "Rebuilt BIFT from FIB/PET")
+	fw.Bift.BuildFromFib()
+	core.Log.Info(b, "Rebuilt BIFT from FIB")
 
 	b.manager.sendCtrlResp(interest, 200, "OK", &mgmt.ControlArgs{})
 }

@@ -213,7 +213,7 @@ func (pfx *PrefixModule) onPrefixInsertionObject(object ndn.Data, faceId uint64)
 		return resError
 	}
 
-	pfx.Announce(prefix, faceId, cost, cost == 1, params.ValidityPeriod)
+	pfx.Announce(prefix, faceId, cost, params.ValidityPeriod)
 
 	return &mgmt.ControlResponse{
 		Val: &mgmt.ControlResponseVal{

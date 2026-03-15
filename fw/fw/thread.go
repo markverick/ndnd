@@ -419,7 +419,6 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	}
 }
 
-
 // processBierInterest is the multicast forwarding pipeline for BIER Interests.
 // It is called directly by processInterest (pipeline-level dispatch) rather than
 // delegating to a forwarding strategy. This reflects the conceptual distinction

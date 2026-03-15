@@ -139,6 +139,6 @@ func (dv *Router) updateFib() {
 	// Rebuild the BIFT whenever the FIB changes so BIER forwarding paths
 	// are always consistent with the routing table.
 	if fw.IsBierEnabled() {
-		fw.Bift.BuildFromFibPet()
+		fw.Bift.BuildFromFib()
 	}
 }

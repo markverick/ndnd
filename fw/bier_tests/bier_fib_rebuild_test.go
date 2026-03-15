@@ -4,7 +4,7 @@ package bier_tests
 // the FIB changes. This tests the hook added in table_algo.go:updateFib().
 //
 // The test works entirely within the fw layer: it simulates "a FIB change"
-// by calling BuildFromFibPet directly (which is what table_algo.go calls),
+// by calling BuildFromFib directly (which is what table_algo.go calls),
 // verifying that next-hop information visible through the FibStrategyTable is
 // reflected in the BIFT after the rebuild — and that stale entries are
 // corrected on a subsequent rebuild.
@@ -18,7 +18,7 @@ import (
 )
 
 // TestBiftRebuildOnFibChange verifies the core invariant introduced by Req 1:
-// after BuildFromFibPet is called (which table_algo.go now does on every FIB
+// after BuildFromFib is called (which table_algo.go now does on every FIB
 // update), the BIFT next-hops reflect whatever is currently in the FIB.
 func TestBiftRebuildOnFibChange(t *testing.T) {
 	// Use the global FibStrategyTable (requires initialization).
@@ -34,7 +34,7 @@ func TestBiftRebuildOnFibChange(t *testing.T) {
 
 	t.Run("BIFT has no nexthops before any FIB route", func(t *testing.T) {
 		// FIB is empty → no next-hops resolved
-		b.BuildFromFibPet()
+		b.BuildFromFib()
 		b.RebuildFbm()
 
 		neighbors := b.GetNeighborEntries()
@@ -45,8 +45,8 @@ func TestBiftRebuildOnFibChange(t *testing.T) {
 
 	t.Run("BIFT reflects nexthop after FIB route added", func(t *testing.T) {
 		// Simulate a FIB entry by directly calling UpdateNextHop (equivalent to
-		// what BuildFromFibPet does after resolving FibStrategyTable).
-		// In production table_algo.go calls BuildFromFibPet() which calls
+		// what BuildFromFib does after resolving FibStrategyTable).
+		// In production table_algo.go calls BuildFromFib() which calls
 		// FibStrategyTable.FindNextHopsEnc; here we directly inject the result.
 		b.UpdateNextHop(1, 100) // routerA reachable via face 100
 		b.UpdateNextHop(2, 200) // routerB reachable via face 200
@@ -105,10 +105,10 @@ func TestBiftRebuildOnFibChange(t *testing.T) {
 	})
 }
 
-// TestBiftBuildFromFibPetMultipleRebuildsSafe verifies that calling
-// BuildFromFibPet multiple times (as happens on every FIB change in
+// TestBiftBuildFromFibMultipleRebuildsSafe verifies that calling
+// BuildFromFib multiple times (as happens on every FIB change in
 // table_algo.go) is safe and idempotent when the FIB is stable.
-func TestBiftBuildFromFibPetMultipleRebuildsSafe(t *testing.T) {
+func TestBiftBuildFromFibMultipleRebuildsSafe(t *testing.T) {
 	table.Initialize()
 
 	b := &fw.BiftState{}
@@ -118,7 +118,7 @@ func TestBiftBuildFromFibPetMultipleRebuildsSafe(t *testing.T) {
 
 	// Simulate multiple FIB-change triggers (nothing changed in FIB itself).
 	for i := 0; i < 10; i++ {
-		b.BuildFromFibPet()
+		b.BuildFromFib()
 	}
 	b.RebuildFbm()
 
@@ -133,7 +133,7 @@ func TestBiftBuildFromFibPetMultipleRebuildsSafe(t *testing.T) {
 			}
 		}
 	}
-	// FIB lookup in BuildFromFibPet won't find rX (not in FibStrategyTable),
+	// FIB lookup in BuildFromFib won't find rX (not in FibStrategyTable),
 	// so NextHop may be 0 — the key invariant is no panic and state is stable.
 	_ = found // acceptable: empty FIB means no nexthop resolved
 }
