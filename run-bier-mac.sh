@@ -12,9 +12,8 @@ GOARCH="${GOARCH/arm64/arm64}"
 
 echo "=== Building Linux binaries (GOARCH=${GOARCH}) ==="
 cd "${NDND_DIR}"
-CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" go build -o .bin/ndnd     ./cmd/ndnd
-CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" go build -o .bin/svs-chat ./cmd/svs-chat
-echo "Built: .bin/ndnd, .bin/svs-chat"
+CGO_ENABLED=0 GOOS=linux GOARCH="${GOARCH}" go build -o .bin/ndnd ./cmd/ndnd
+echo "Built: .bin/ndnd"
 
 echo "=== Running e2e tests in Docker ==="
 docker run --rm \

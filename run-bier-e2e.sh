@@ -13,10 +13,6 @@ log "Building ndnd (linux/amd64)..."
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$BIN/ndnd" ./cmd/ndnd/main.go
 log "  $(du -sh "$BIN/ndnd" | cut -f1)  $BIN/ndnd"
 
-log "Building svs-chat (linux/amd64)..."
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$BIN/svs-chat" ./cmd/svs-chat/main.go
-log "  $(du -sh "$BIN/svs-chat" | cut -f1)  $BIN/svs-chat"
-
 log "Launching Mini-NDN container..."
 docker run --rm \
   --privileged \

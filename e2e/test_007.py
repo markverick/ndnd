@@ -58,7 +58,7 @@ def scenario(ndn: Minindn, network='/minindn'):
     info('Starting SVS Chat consumers (alo-latest)...\n')
     for consumer in consumers:
         consumer.cmd(
-            f'svs-chat -prefix "{network}/svs" -name "/{consumer.name}" -wait 300'
+            f'ndnd svs-chat --prefix "{network}/svs" --name "/{consumer.name}" --wait 300'
             f' > /tmp/chat-recv-{consumer.name}.log 2>&1 &'
         )
 
@@ -69,11 +69,11 @@ def scenario(ndn: Minindn, network='/minindn'):
     dv_util.wait_prefix_pet_ready({node: consumer_prefixes for node in hosts}, deadline=180)
 
     # Step 3: Start producer. All consumer egress routers are now in the PET.
-    # -delay 20: SVS state-vector exchange before publishing.
+    # --delay 20: SVS state-vector exchange before publishing.
     info(f'Starting SVS Chat producer ({producer.name})...\n')
     producer.cmd(
-        f'svs-chat -prefix "{network}/svs" -name "/{producer.name}"'
-        f' -msg "{msg}" -delay 20 -wait 120'
+        f'ndnd svs-chat --prefix "{network}/svs" --name "/{producer.name}"'
+        f' --msg "{msg}" --delay 20 --wait 120'
         f' > /tmp/chat-prod.log 2>&1 &'
     )
 
@@ -88,7 +88,7 @@ def scenario(ndn: Minindn, network='/minindn'):
 
     info('Verifying SVS Chat message propagation...\n')
     for node in chat_nodes:
-        node.cmd('pkill -f svs-chat 2>/dev/null; true')
+        node.cmd("pkill -f 'ndnd svs-chat' 2>/dev/null; true")
     time.sleep(1)  # let log buffers flush
 
     failures = []

@@ -13,7 +13,7 @@ is unaffected.
 | `fw/fw/bier.go` (296 lines) | BIFT table, bit-string helpers (`BierClone`, `BierClearBit`, `BierIsZero`, `BuildBierBitString`), `BuildFromFib()` rebuilds BIFT from FIB state |
 | `fw/fw/bier_strategy.go` | `BierStrategy` — PIT-tandem BIER forwarding; replicates Interest per-bit via `SendInterest`; shared `bierReplicate()` function used by both `BierStrategy` and `Multicast` |
 | `fw/mgmt/bift.go` (95 lines) | Management face handler for BIER Forwarding Information Base Table (BIFT) |
-| `cmd/svs-chat/main.go` | SVS ALO chat CLI demo that exercises BIER multicast sync |
+| `tools/svschat.go` | SVS ALO chat subcommand (`ndnd svs-chat`) for BIER multicast sync |
 | `fw/bier_tests/` | Unit + integration tests for BIER (5 files, including `bier_fib_rebuild_test.go`) |
 | `e2e/test_005.py` | E2E test: BIER multicast on 52-node Sprint topology (51/51 consumers OK) |
 | `e2e/test_006.py` | E2E test: multi-group BIER (two concurrent prefixes) |
@@ -67,7 +67,8 @@ Four logical additions in `processInterest` / `twoPhaseLookup`:
 ### `std/object/client_announce.go`
 - Encodes `Announcement.Multicast` as `Flags` bit 0 in `ControlArgs` when announcing via local routing daemon
 
-### `cmd/svs-chat/main.go`
+### `tools/svschat.go`
+- SVS chat as `ndnd svs-chat` subcommand (no separate binary needed)
 - Uses `Multicast: true` on the sync group prefix announcement (replaces the previous `Cost: 1` heuristic)
 
 ### `dv/dv/insertion.go`

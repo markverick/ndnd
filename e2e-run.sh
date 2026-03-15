@@ -11,10 +11,8 @@ timeout 15 service openvswitch-switch start 2>/dev/null || true
 timeout 5  ovs-vsctl set-manager ptcp:6640  2>/dev/null || true
 
 log "Installing binaries..."
-install -m 755 /ndnd/.bin/ndnd      /usr/local/bin/ndnd
-install -m 755 /ndnd/.bin/svs-chat  /usr/local/bin/svs-chat
-log "  ndnd:      $(ndnd --version 2>&1 | head -1 || echo unknown)"
-log "  svs-chat:  installed"
+install -m 755 /ndnd/.bin/ndnd /usr/local/bin/ndnd
+log "  ndnd: $(ndnd --version 2>&1 | head -1 || echo unknown)"
 
 # Mini-NDN's NFD config template needs readvertise_nlsr enabled.
 sed -i 's/readvertise_nlsr no/readvertise_nlsr yes/g' \

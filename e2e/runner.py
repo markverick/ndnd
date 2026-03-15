@@ -20,14 +20,13 @@ import test_008
 
 
 def ensure_local_binaries() -> None:
-    """Build ndnd and svs-chat into .bin/ (or use pre-built if `go` is a no-op shim)."""
+    """Build ndnd into .bin/ (or use pre-built if already available)."""
     repo_root = Path(__file__).resolve().parent.parent
     local_bin = repo_root / ".bin"
     local_bin.mkdir(parents=True, exist_ok=True)
 
-    for name, pkg in [("ndnd", "./cmd/ndnd"), ("svs-chat", "./cmd/svs-chat")]:
-        if (local_bin / name).exists() or shutil.which(name):
-            continue
+    name, pkg = "ndnd", "./cmd/ndnd"
+    if not (local_bin / name).exists() and not shutil.which(name):
         subprocess.check_call(["go", "build", "-o", str(local_bin / name), pkg], cwd=repo_root)
 
     os.environ["PATH"] = f"{local_bin}:{os.environ.get('PATH', '')}"
