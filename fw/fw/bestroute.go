@@ -73,7 +73,7 @@ func (s *BestRoute) AfterReceiveInterest(
 
 	// sort nexthops by cost and send to best-possible hop for each unique ER
 	sort.Slice(nexthops, func(i, j int) bool {
-		return nexthops[i].HopEntry.Cost < nexthops[i].HopEntry.Cost
+		return nexthops[i].HopEntry.Cost < nexthops[j].HopEntry.Cost
 	})
 
 	now := time.Now()
@@ -101,12 +101,10 @@ func (s *BestRoute) AfterReceiveInterest(
 
 			// if there is an associated EgressRouter tag with this new route, then set packet.EgressRouter to the tag
 			if nh.EgressRouter != nil {
-				oldEgress := packet.EgressRouter
 				packet.EgressRouter = nh.EgressRouter
 				if sent := s.SendInterest(packet, pitEntry, nh.HopEntry.Nexthop, inFace); sent {
 					return
 				}
-				packet.EgressRouter = oldEgress
 				// otherwise, normal forwarding
 			} else {
 				if sent := s.SendInterest(packet, pitEntry, nh.HopEntry.Nexthop, inFace); sent {

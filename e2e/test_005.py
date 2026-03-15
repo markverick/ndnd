@@ -1,5 +1,6 @@
 import random
 import os
+import time
 from pathlib import Path
 
 from mininet.log import info
@@ -55,16 +56,18 @@ def scenario(ndn: Minindn, network='/minindn'):
                 buf = []
 
     try:
+        beg = time.time()
         for node in chatters[:publish_size]:
             # send a random message into chat
             msg = os.urandom(8).hex()
             node.write(msg + "\n")
-            info(f"{node.name} publishing {msg}\n")
+            info(f"[t={time.time() - beg:.2f}] {node.name} publishing {msg!r}\n")
 
             for other_node in chatters:
                 if other_node.name == node.name:
                     continue
                 received = receive_chat_message(other_node)
+                info(f"[t={time.time() - beg:.2f}] {other_node.name} received {received!r}\n")
                 assert msg in received, "received wrong message"
 
     # custom cleanup logic for this test

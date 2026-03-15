@@ -67,9 +67,15 @@ func (s *Replicast) AfterReceiveInterest(
 		return
 	}
 
+	// interest with ER tag should only be unicast as dest router is known
+	if len(packet.EgressRouter) > 0 {
+		core.Log.Debug(s, "Interest with ER tag passed to replicast - DROP", "name", packet.Name)
+		return
+	}
+
 	// sort nexthops by cost and send to best-possible nexthop for each unique ER
 	sort.Slice(nexthops, func(i, j int) bool {
-		return nexthops[i].HopEntry.Cost < nexthops[i].HopEntry.Cost
+		return nexthops[i].HopEntry.Cost < nexthops[j].HopEntry.Cost
 	})
 
 	sentER := make(map[uint64]bool)
@@ -80,13 +86,12 @@ func (s *Replicast) AfterReceiveInterest(
 			continue
 		}
 
-		oldEgress := packet.EgressRouter
-		packet.EgressRouter = nh.EgressRouter
-		if sent := s.SendInterest(packet, pitEntry, nh.HopEntry.Nexthop, inFace); sent {
-			core.Log.Trace(s, "Forwarded Interest", "name", packet.Name, "faceid", nh.HopEntry.Nexthop, "er", nh.EgressRouter, "inFace", inFace)
+		outgoingPkt := *packet
+		outgoingPkt.EgressRouter = nh.EgressRouter
+		if sent := s.SendInterest(&outgoingPkt, pitEntry, nh.HopEntry.Nexthop, inFace); sent {
+			core.Log.Trace(s, "Forwarded Interest", "name", outgoingPkt.Name, "faceid", nh.HopEntry.Nexthop, "er", nh.EgressRouter, "inFace", inFace)
 			sentER[nh.EgressRouter.Hash()] = true
 		}
-		packet.EgressRouter = oldEgress
 	}
 
 	for _, nh := range nexthops {
