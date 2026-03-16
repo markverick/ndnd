@@ -294,11 +294,7 @@ func (dv *Router) mgmtOnPrefix(args ndn.InterestHandlerArgs) {
 
 		multicast := params.Val.Flags.GetOr(0)&1 != 0
 		dv.mutex.Lock()
-		if multicast {
-			dv.pfx.AnnounceSync(name, faceID, cost, validity)
-		} else {
-			dv.pfx.Announce(name, faceID, cost, validity)
-		}
+		dv.pfx.Announce(name, faceID, cost, multicast, validity)
 		dv.mutex.Unlock()
 
 		res.Val.StatusCode = 200

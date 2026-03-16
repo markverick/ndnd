@@ -226,13 +226,8 @@ func (pfx *PrefixModule) Reset() {
 
 // Announce adds or updates a local prefix in prefix egress state.
 // Use face=0 and cost=0 for route-only semantics.
-func (pfx *PrefixModule) Announce(name enc.Name, face uint64, cost uint64, validity *spec.ValidityPeriod) {
-	pfx.announce(name, face, cost, false, validity)
-}
-
-// AnnounceSync adds or updates a Sync group prefix marked for BIER multicast.
-func (pfx *PrefixModule) AnnounceSync(name enc.Name, face uint64, cost uint64, validity *spec.ValidityPeriod) {
-	pfx.announce(name, face, cost, true, validity)
+func (pfx *PrefixModule) Announce(name enc.Name, face uint64, cost uint64, multicast bool, validity *spec.ValidityPeriod) {
+	pfx.announce(name, face, cost, multicast, validity)
 }
 
 func (pfx *PrefixModule) announce(name enc.Name, face uint64, cost uint64, multicast bool, validity *spec.ValidityPeriod) {
