@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Creates and returns the Cobra command hierarchy for the NDN command‑line tool, wiring each subcommand (e.g., status, face‑create, route‑add) to the appropriate Tool execution methods.
+// (AI GENERATED DESCRIPTION): Creates and returns the Cobra command hierarchy for the NDN command‑line tool, wiring each subcommand (e.g., status, face‑create, route‑add) to the appropriate Tool execution methods.
 func Cmds() []*cobra.Command {
 	t := Tool{}
 	cmd := func(mod string, cmd string, defaults []string) func(*cobra.Command, []string) {
