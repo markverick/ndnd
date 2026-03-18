@@ -71,6 +71,18 @@ func Cmds() []*cobra.Command {
 		Args:  cobra.NoArgs,
 		Run:   t.ExecPetList,
 	}, {
+		Use:   "bift-register [params]",
+		Short: "Register a router BFR-ID",
+		Args:  cobra.ArbitraryArgs,
+		Run: cmd("bift", "register", []string{
+			"cost=0",
+		}),
+	}, {
+		Use:   "bift-rebuild",
+		Short: "Rebuild BIFT from FIB/PET",
+		Args:  cobra.NoArgs,
+		Run:   cmd("bift", "rebuild", []string{}),
+	}, {
 		Use:   "pet-add-egress [params]",
 		Short: "Add an egress router to the Prefix Egress Table (PET)",
 		Args:  cobra.ArbitraryArgs,

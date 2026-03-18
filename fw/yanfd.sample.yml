@@ -87,6 +87,8 @@ fw:
   lock_threads_to_cores: false
   # Router name (if routing is configured)
   router_name: ""
+  # BIER bit index for this router (-1 = disabled)
+  bier_index: -1
 
 mgmt:
   # Controls whether management over /localhop is enabled or disabled

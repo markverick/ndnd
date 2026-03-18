@@ -88,3 +88,25 @@ def wait_prefix_pet_ready(node_to_prefixes: dict[Node, set[str]], deadline=30) -
         time.sleep(1)
 
     raise Exception('PET prefix replication did not converge')
+
+def populate_bift(nodes: list[Node], bier_map: dict, network=DEFAULT_NETWORK):
+    info(f'Deploying BIER indices to BIFT ({len(bier_map)} routers)...\n')
+    for node in nodes:
+        for router, idx in bier_map.items():
+            router_name = f'{network}/{router.name}'
+            node.cmd(f'ndnd fw bift-register prefix="{router_name}" cost={idx}')
+        node.cmd('ndnd fw bift-rebuild')
+    info('BIFT populated on all nodes\n')
+
+
+def dump_bier_logs(nodes: list[Node], label: str = '', lines: int = 40) -> str:
+    """Return BIER-relevant log lines from each node's ndnd log (for failure diagnostics)."""
+    out = f'\n=== BIER forwarder logs{" (" + label + ")" if label else ""} ===\n'
+    for node in nodes:
+        log = node.cmd(
+            f'cat /tmp/minindn/{node.name}/log/yanfd.log'
+            f' 2>/dev/null | grep -iE "bier|bift|bfir|bfr|bfer|strategy" | tail -{lines}'
+        )
+        if log.strip():
+            out += f'--- {node.name} ---\n{log}\n'
+    return out

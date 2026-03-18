@@ -263,6 +263,11 @@ func sendPacket(l *NDNLPLinkService, out dispatch.OutPkt) {
 			fragment.EgressRouter = nil
 		}
 
+		// Set BIER bit-string on fragment
+		if pkt.L3.Interest != nil && len(out.Pkt.Bier) > 0 {
+			fragment.Bier = out.Pkt.Bier
+		}
+
 		// Encode final LP frame
 		pkt := defn.FwPacket{LpPacket: fragment}
 		frameWire := pkt.Encode()

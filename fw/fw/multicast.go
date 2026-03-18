@@ -23,7 +23,6 @@ type Multicast struct {
 	StrategyBase
 }
 
-// (AI GENERATED DESCRIPTION): Registers the Multicast strategy by appending its constructor to the global strategy initialization list and associating the version “1” with the “multicast” key.
 func init() {
 	strategyInit = append(strategyInit, func() Strategy { return &Multicast{} })
 	StrategyVersions["multicast"] = []uint64{1}
@@ -57,20 +56,25 @@ func (s *Multicast) AfterReceiveData(
 	}
 }
 
-// (AI GENERATED DESCRIPTION): Handles a received multicast Interest by suppressing retransmissions that fall within a defined suppression interval and otherwise forwarding the Interest to all applicable next‑hops.
+// AfterReceiveInterest forwards using BIER replication when a BIER bit-string
+// is present. Otherwise falls back to flooding all nexthops (needed for DV
+// routing advertisement sync which has no BIER bit-string).
 func (s *Multicast) AfterReceiveInterest(
 	packet *defn.Pkt,
 	pitEntry table.PitEntry,
 	inFace uint64,
 	nexthops []StrategyCandidateHop,
 ) {
+	if len(packet.Bier) > 0 {
+		bierReplicate(s, packet, pitEntry, inFace, s.SendInterest)
+		return
+	}
+
 	if len(nexthops) == 0 {
 		core.Log.Debug(s, "No nexthop for Interest", "name", packet.Name)
 		return
 	}
 
-	// If there is an out record less than suppression interval ago, drop the
-	// retransmission to suppress it (only if the nonce is different)
 	now := time.Now()
 	for _, outRecord := range pitEntry.OutRecords() {
 		if outRecord.LatestNonce != packet.L3.Interest.NonceV.Unwrap() &&
@@ -80,7 +84,6 @@ func (s *Multicast) AfterReceiveInterest(
 		}
 	}
 
-	// Send interest to all nexthops
 	for _, nexthop := range nexthops {
 		core.Log.Trace(s, "Forwarding Interest", "name", packet.Name, "faceid", nexthop.HopEntry.Nexthop)
 		s.SendInterest(packet, pitEntry, nexthop.HopEntry.Nexthop, inFace)

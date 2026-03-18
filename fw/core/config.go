@@ -117,6 +117,8 @@ type Config struct {
 		LockThreadsToCores bool `json:"lock_threads_to_cores"`
 		// Router name (if routing is configured)
 		RouterName string `json:"router_name"`
+		// BIER bit index for this router (-1 = disabled)
+		BierIndex int `json:"bier_index"`
 	} `json:"fw"`
 
 	Mgmt struct {
@@ -219,6 +221,7 @@ func DefaultConfig() *Config {
 	c.Fw.QueueSize = 1024
 	c.Fw.LockThreadsToCores = false
 	c.Fw.RouterName = ""
+	c.Fw.BierIndex = -1
 
 	c.Mgmt.AllowLocalhop = false
 

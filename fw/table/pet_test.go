@@ -58,7 +58,7 @@ func TestPetCleanUpFaceKeepsEntryWhenEgressExists(t *testing.T) {
 	name := testName(t, "/example/c")
 	egress := testName(t, "/router/x")
 
-	pet.AddEgressEnc(name, egress)
+	pet.AddEgressEnc(name, egress, false)
 	pet.AddNextHopEnc(name, 44, 1)
 	pet.CleanUpFace(44)
 
