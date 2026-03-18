@@ -14,7 +14,6 @@ import (
 	"github.com/named-data/ndnd/fw/core"
 	"github.com/named-data/ndnd/fw/defn"
 	"github.com/named-data/ndnd/fw/table"
-	enc "github.com/named-data/ndnd/std/encoding"
 )
 
 // BestRouteSuppressionTime is the time to suppress retransmissions of the same Interest.
@@ -65,23 +64,24 @@ func (s *BestRoute) AfterReceiveInterest(
 	packet *defn.Pkt,
 	pitEntry table.PitEntry,
 	inFace uint64,
-	nexthops []*table.FibNextHopEntry,
-	nextER []enc.Name,
+	nexthops []StrategyCandidateHop,
 ) {
 	if len(nexthops) == 0 {
 		core.Log.Debug(s, "No nexthop found - DROP", "name", packet.Name)
 		return
 	}
 
-	// Sort nexthops by cost and send to best-possible nexthop
-	sort.Slice(nexthops, func(i, j int) bool { return nexthops[i].Cost < nexthops[j].Cost })
+	// sort nexthops by cost and send to best-possible hop for each unique ER
+	sort.Slice(nexthops, func(i, j int) bool {
+		return nexthops[i].HopEntry.Cost < nexthops[j].HopEntry.Cost
+	})
 
 	now := time.Now()
 	for pass := range 2 {
-		for i, nh := range nexthops {
+		for _, nh := range nexthops {
 			// In the first pass, skip hops that already have a out record
 			if pass == 0 {
-				if oR := pitEntry.OutRecords()[nh.Nexthop]; oR != nil {
+				if oR := pitEntry.OutRecords()[nh.HopEntry.Nexthop]; oR != nil {
 					// Suppress retransmissions of the same Interest within suppression time
 					if oR.LatestTimestamp.Add(BestRouteSuppressionTime).After(now) {
 						core.Log.Debug(s, "Suppressed Interest - DROP", "name", packet.Name)
@@ -97,19 +97,17 @@ func (s *BestRoute) AfterReceiveInterest(
 			// But then we need to resort the list - this is just faster for now.
 			// In densely connected networks, this is not a big deal.
 
-			core.Log.Trace(s, "Forwarding Interest", "name", packet.Name, "faceid", nh.Nexthop)
+			core.Log.Trace(s, "Forwarding Interest", "name", packet.Name, "faceid", nh.HopEntry.Nexthop)
 
 			// if there is an associated EgressRouter tag with this new route, then set packet.EgressRouter to the tag
-			if i < len(nextER) {
-				oldEgress := packet.EgressRouter
-				packet.EgressRouter = nextER[i]
-				if sent := s.SendInterest(packet, pitEntry, nh.Nexthop, inFace); sent {
+			if nh.EgressRouter != nil {
+				packet.EgressRouter = nh.EgressRouter
+				if sent := s.SendInterest(packet, pitEntry, nh.HopEntry.Nexthop, inFace); sent {
 					return
 				}
-				packet.EgressRouter = oldEgress
 				// otherwise, normal forwarding
 			} else {
-				if sent := s.SendInterest(packet, pitEntry, nh.Nexthop, inFace); sent {
+				if sent := s.SendInterest(packet, pitEntry, nh.HopEntry.Nexthop, inFace); sent {
 					return
 				}
 			}

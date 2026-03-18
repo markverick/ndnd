@@ -18,7 +18,9 @@ jobs:
           go-version-file: go.mod
 
       - name: Build
-        run: make
+        run: |
+          make
+          make examples
 
       - name: Test
         run: make test
@@ -27,6 +29,11 @@ jobs:
         with:
           name: ndnd
           path: ndnd
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alo-latest
+          path: .bin/alo-latest
 
   lint:
     runs-on: ubuntu-latest
@@ -49,6 +56,7 @@ jobs:
   e2e:
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     container:
       image: ghcr.io/named-data/mini-ndn:master
@@ -63,13 +71,21 @@ jobs:
           name: ndnd
           path: /usr/bin/
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: alo-latest
+          path: /usr/bin/
+
       - name: Mark ndnd as executable
-        run: chmod +x /usr/bin/ndnd
+        run: |
+          chmod +x /usr/bin/ndnd
+          chmod +x /usr/bin/alo-latest
 
       - name: Copy ndnd to e2e's bin folder
         run: |
           mkdir .bin/
           cp /usr/bin/ndnd .bin/
+          cp /usr/bin/alo-latest .bin/
 
       - name: Run e2e tests
         run: make e2e

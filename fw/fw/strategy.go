@@ -15,6 +15,14 @@ import (
 	enc "github.com/named-data/ndnd/std/encoding"
 )
 
+type StrategyCandidateHop struct {
+	// candidate next hop entry from FIB
+	HopEntry *table.FibNextHopEntry
+
+	// egress router the next hop is intended to route to
+	EgressRouter enc.Name
+}
+
 // Strategy represents a forwarding strategy.
 type Strategy interface {
 	Instantiate(fwThread *Thread)
@@ -33,8 +41,7 @@ type Strategy interface {
 		packet *defn.Pkt,
 		pitEntry table.PitEntry,
 		inFace uint64,
-		nexthops []*table.FibNextHopEntry,
-		nextER []enc.Name)
+		nexthops []StrategyCandidateHop)
 	BeforeSatisfyInterest(
 		pitEntry table.PitEntry,
 		inFace uint64)
