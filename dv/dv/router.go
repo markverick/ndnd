@@ -315,7 +315,7 @@ func (dv *Router) register() (err error) {
 		},
 		Retries: -1,
 	})
-	// Set strategy to multicast for advertisement sync Interests, so
+	// Set strategy to broadcast for advertisement sync Interests, so
 	// /localhop/.../DV/ADS traffic fan-outs to all neighbor nexthops.
 	dv.nfdc.Exec(nfdc.NfdMgmtCmd{
 		Module: "strategy-choice",
@@ -323,7 +323,7 @@ func (dv *Router) register() (err error) {
 		Args: &mgmt.ControlArgs{
 			Name: dv.config.AdvertisementSyncPrefix(),
 			Strategy: &mgmt.Strategy{
-				Name: config.MulticastStrategy,
+				Name: config.BroadcastStrategy,
 			},
 		},
 		Retries: -1,
@@ -334,7 +334,7 @@ func (dv *Router) register() (err error) {
 		Args: &mgmt.ControlArgs{
 			Name: dv.pfx.SyncPrefix(),
 			Strategy: &mgmt.Strategy{
-				Name: config.MulticastStrategy,
+				Name: config.BroadcastStrategy,
 			},
 		},
 		Retries: -1,

@@ -249,6 +249,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	// Get strategy for name
 	strategyName := table.FibStrategyTable.FindStrategyEnc(interest.Name())
 	strategy := t.strategies[strategyName.Hash()]
+	bestRouteStrategy := t.strategies[defn.BEST_ROUTE_STRATEGY.Hash()]
 
 	// Add in-record and determine if already pending
 	// this looks like custom interest again, but again can be changed without much issue?
@@ -345,26 +346,24 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	}
 
 	// Filter network FIB nexthops.
-	allowedNetNexthops := make([]*table.FibNextHopEntry, 0, len(nextNet))
-	allowedNetER := make([]enc.Name, 0, len(nextER))
-	for i, nexthop := range nextNet {
+	allowedNetNexthops := make([]StrategyCandidateHop, 0, len(nextNet))
+	for _, nexthop := range nextNet {
 		// Exclude incoming face
-		if nexthop.Nexthop == packet.IncomingFaceID {
+		if nexthop.HopEntry.Nexthop == packet.IncomingFaceID {
 			continue
 		}
 
 		// Exclude non-local faces for localhop enforcement
 		if localFacesOnly {
-			if face := dispatch.GetFace(nexthop.Nexthop); face != nil && face.Scope() != defn.Local {
+			if face := dispatch.GetFace(nexthop.HopEntry.Nexthop); face != nil && face.Scope() != defn.Local {
 				continue
 			}
 		}
 
 		// Exclude faces that have an in-record for this interest
 		// TODO: unclear where NFD dev guide specifies such behavior (if any)
-		if pitEntry.InRecords()[nexthop.Nexthop] == nil {
+		if pitEntry.InRecords()[nexthop.HopEntry.Nexthop] == nil {
 			allowedNetNexthops = append(allowedNetNexthops, nexthop)
-			allowedNetER = append(allowedNetER, nextER[i])
 		}
 	}
 
@@ -452,8 +451,10 @@ func (t *Thread) twoPhaseLookup(lookupName enc.Name, egressRouter enc.Name, rout
 			return nextLocal, nextNet, nextER, false
 		} else {
 			for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(egressRouter) {
-				nextNet = append(nextNet, nextHop)
-				nextER = append(nextER, egressRouter)
+				nextNet = append(nextNet, StrategyCandidateHop{
+					HopEntry:     nextHop,
+					EgressRouter: egressRouter,
+				})
 			}
 			return nextLocal, nextNet, nextER, false
 		}
@@ -477,8 +478,10 @@ func (t *Thread) twoPhaseLookup(lookupName enc.Name, egressRouter enc.Name, rout
 	// Ingress (BFIR) path: map PET egress routers to network next-hops.
 	for _, er := range petEntry.EgressRouters {
 		for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(er) {
-			nextNet = append(nextNet, nextHop)
-			nextER = append(nextER, er)
+			nextNet = append(nextNet, StrategyCandidateHop{
+				HopEntry:     nextHop,
+				EgressRouter: er,
+			})
 		}
 	}
 	isMulticast = petEntry.Multicast

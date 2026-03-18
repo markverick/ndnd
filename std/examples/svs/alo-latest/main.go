@@ -168,7 +168,10 @@ func main() {
 		svsalo.SyncPrefix(),
 		svsalo.DataPrefix(),
 	} {
-		client.AnnouncePrefix(ndn.Announcement{Name: route})
+		client.AnnouncePrefix(ndn.Announcement{
+			Name:   route,
+			Expose: true,
+		})
 		defer client.WithdrawPrefix(route, nil)
 	}
 

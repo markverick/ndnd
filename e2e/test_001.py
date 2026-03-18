@@ -58,6 +58,22 @@ def scenario(ndn: Minindn, network='/minindn'):
         if f'/localhop{network}/' in fib and '/32=DV' in fib:
             raise Exception(f'Router-specific localhop DV entries unexpectedly present in FIB on {node.name}')
 
+    # Validate the deprecation of multicast in DV code (#174)
+    for node in ndn.net.hosts:
+        strategy = node.cmd('ndnd fw strategy-list')
+        if "multicast" in strategy:
+            raise Exception(f'Multicast is to be retired, unexpectedly present in strategy on {node.name}')
+        expected_strategies = [
+            # Localhop SVS sync interests should use broadcast (#174)
+            "prefix=/minindn/32=DV/32=PES/32=svs strategy=/localhost/nfd/strategy/broadcast/v=1",
+
+            # Localhop advertisement sync interests should use broadcast strategy (#174)
+            "prefix=/localhop/minindn/32=DV/32=ADS strategy=/localhost/nfd/strategy/broadcast/v=1",
+        ]
+        for expected_strat in expected_strategies:
+            if expected_strat not in strategy:
+                raise Exception(f'Strategy {expected_strat!r} not in strategy on {node.name}')
+
     for node, put_node in cat_requests:
         cmd = f'ndnd cat "{network}/{put_node.name}/test" > recv.test.bin 2> cat.log'
         info(f'{node.name} {cmd}\n')
