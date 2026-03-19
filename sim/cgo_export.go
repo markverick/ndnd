@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/named-data/ndnd/std/ndn"
 	sig "github.com/named-data/ndnd/std/security/signer"
 	"github.com/named-data/ndnd/std/types/optional"
+	"github.com/named-data/ndnd/std/utils"
 )
 
 /*
@@ -83,8 +85,9 @@ func (c *Ns3Clock) FireEvent(id EventID) {
 // --- Global Runtime (singleton for CGo access) ---
 
 var (
-	globalRuntime *Runtime
-	globalClocks  sync.Map // nodeID -> *Ns3Clock
+	globalRuntime     *Runtime
+	globalClocks      sync.Map // nodeID -> *Ns3Clock
+	consumerStopFlags sync.Map // nodeID -> *int32 (atomic flag)
 )
 
 // --- Exported CGo functions called by ns-3 C++ code ---
@@ -439,4 +442,82 @@ func NdndSimWithdrawPrefixFromDv(nodeId C.uint32_t, prefixStr *C.char, prefixLen
 
 	node.WithdrawPrefixFromDv(name)
 	return 0
+}
+
+//export NdndSimRegisterConsumer
+func NdndSimRegisterConsumer(nodeId C.uint32_t, prefixStr *C.char, prefixLen C.int, frequencyHz C.double, lifetimeMs C.uint32_t) C.int {
+	if globalRuntime == nil {
+		return -1
+	}
+	node := globalRuntime.GetNode(uint32(nodeId))
+	if node == nil {
+		return -1
+	}
+
+	prefix := C.GoStringN(prefixStr, prefixLen)
+	name, err := parseNameFromString(prefix)
+	if err != nil {
+		return -1
+	}
+
+	engine := node.Engine()
+	lifetime := time.Duration(lifetimeMs) * time.Millisecond
+
+	val, ok := globalClocks.Load(uint32(nodeId))
+	if !ok {
+		return -1
+	}
+	clock := val.(*Ns3Clock)
+
+	var seqNo uint64
+	freq := float64(frequencyHz)
+	if freq <= 0 {
+		freq = 1.0
+	}
+	interval := time.Duration(float64(time.Second) / freq)
+
+	var stopped int32
+	consumerStopFlags.Store(uint32(nodeId), &stopped)
+
+	var sendNext func()
+	sendNext = func() {
+		if atomic.LoadInt32(&stopped) != 0 {
+			return
+		}
+
+		seq := seqNo
+		seqNo++
+
+		// Build name: prefix + seqNo as GenericNameComponent
+		iName := make(enc.Name, len(name)+1)
+		copy(iName, name)
+		iName[len(name)] = enc.NewGenericComponent(strconv.FormatUint(seq, 10))
+
+		cfg := &ndn.InterestConfig{
+			Lifetime: optional.Some(lifetime),
+			Nonce:    utils.ConvertNonce(engine.Timer().Nonce()),
+		}
+		interest, err := engine.Spec().MakeInterest(iName, cfg, nil, nil)
+		if err != nil {
+			return
+		}
+		engine.Express(interest, func(args ndn.ExpressCallbackArgs) {
+			// Data notification is handled by SimEngine.onDataReceived
+		})
+
+		// Schedule next send
+		clock.Schedule(interval, sendNext)
+	}
+
+	// Schedule first send after one interval
+	clock.Schedule(interval, sendNext)
+
+	return 0
+}
+
+//export NdndSimStopConsumer
+func NdndSimStopConsumer(nodeId C.uint32_t) {
+	if val, ok := consumerStopFlags.Load(uint32(nodeId)); ok {
+		atomic.StoreInt32(val.(*int32), 1)
+	}
 }
