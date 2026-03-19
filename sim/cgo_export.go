@@ -358,6 +358,48 @@ func NdndSimRegisterProducer(nodeId C.uint32_t, prefixStr *C.char, prefixLen C.i
 	return 0
 }
 
+//export NdndSimGetRibEntryCount
+func NdndSimGetRibEntryCount(nodeId C.uint32_t, prefixStr *C.char, prefixLen C.int) C.int {
+	if globalRuntime == nil {
+		return 0
+	}
+	node := globalRuntime.GetNode(uint32(nodeId))
+	if node == nil {
+		return 0
+	}
+
+	entries := node.Forwarder.rib.GetAllEntries()
+
+	// No prefix filter — count all entries
+	if prefixStr == nil || int(prefixLen) == 0 {
+		return C.int(len(entries))
+	}
+
+	// Count only entries whose name starts with the given prefix
+	prefix := C.GoStringN(prefixStr, prefixLen)
+	filterName, err := parseNameFromString(prefix)
+	if err != nil {
+		return 0
+	}
+
+	count := 0
+	for _, entry := range entries {
+		if len(entry.Name) >= len(filterName) {
+			match := true
+			for i, comp := range filterName {
+				if !comp.Equal(entry.Name[i]) {
+					match = false
+					break
+				}
+			}
+			if match {
+				count++
+			}
+		}
+	}
+	return C.int(count)
+}
+
 //export NdndSimAnnouncePrefixToDv
 func NdndSimAnnouncePrefixToDv(nodeId C.uint32_t, prefixStr *C.char, prefixLen C.int) C.int {
 	if globalRuntime == nil {
