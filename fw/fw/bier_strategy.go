@@ -72,8 +72,7 @@ func (s *BierStrategy) AfterReceiveInterest(
 	packet *defn.Pkt,
 	pitEntry table.PitEntry,
 	inFace uint64,
-	nexthops []*table.FibNextHopEntry,
-	nextER []enc.Name,
+	nexthops []StrategyCandidateHop,
 ) {
 	if len(packet.Bier) == 0 {
 		// BierStrategy only handles BIER Interests. No broadcast fallback.

@@ -61,7 +61,7 @@ type BlobFetch struct {
 }
 
 type SecurityConfigObject struct {
-	//+field:sequence:[]byte:binary:[]byte
+	//+field:binary
 	Schema []byte `tlv:"0x1A5"`
 	//+field:sequence:[]byte:binary:[]byte
 	Anchors [][]byte `tlv:"0x1BA"`

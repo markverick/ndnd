@@ -9,6 +9,8 @@ ndnd: clean
 	CGO_ENABLED=0 go build -o ndnd \
 		-ldflags "-X '${STD_PACKAGE}/utils.NDNdVersion=${VERSION}'" \
 		cmd/ndnd/main.go
+	mkdir -p .bin/
+	cp ndnd .bin/
 
 examples: .bin/alo-latest
 
