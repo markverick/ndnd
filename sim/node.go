@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -187,7 +188,7 @@ func (n *Node) AppFaceID() uint64 {
 // network is the network prefix (e.g., "/ndn"), routerName is the full
 // router name (e.g., "/ndn/node0"). The DV router discovers neighbors
 // dynamically via sync Interests on all connected faces.
-func (n *Node) StartDv(network, router string) error {
+func (n *Node) StartDv(network, router string, cfgJSON string) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
@@ -195,9 +196,15 @@ func (n *Node) StartDv(network, router string) error {
 	cfg.Network = network
 	cfg.Router = router
 	cfg.KeyChainUri = "insecure"
-	// Faster convergence for simulation
-	cfg.AdvertisementSyncInterval_ms = 1000
-	cfg.RouterDeadInterval_ms = 5000
+	if cfgJSON != "" {
+		if err := json.Unmarshal([]byte(cfgJSON), cfg); err != nil {
+			return fmt.Errorf("bad DV config JSON: %w", err)
+		}
+		// Restore fields that must not be overridden from the outside
+		cfg.Network = network
+		cfg.Router = router
+		cfg.KeyChainUri = "insecure"
+	}
 
 	sdv, err := NewSimDvRouter(n.clock, n.appEngine, cfg)
 	if err != nil {

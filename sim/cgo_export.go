@@ -255,7 +255,7 @@ func NdndSimFireEvent(nodeId C.uint32_t, eventId C.uint64_t) {
 }
 
 //export NdndSimStartDv
-func NdndSimStartDv(nodeId C.uint32_t, networkStr *C.char, networkLen C.int, routerStr *C.char, routerLen C.int) C.int {
+func NdndSimStartDv(nodeId C.uint32_t, networkStr *C.char, networkLen C.int, routerStr *C.char, routerLen C.int, cfgStr *C.char, cfgLen C.int) C.int {
 	if globalRuntime == nil {
 		return -1
 	}
@@ -266,8 +266,9 @@ func NdndSimStartDv(nodeId C.uint32_t, networkStr *C.char, networkLen C.int, rou
 
 	network := C.GoStringN(networkStr, networkLen)
 	router := C.GoStringN(routerStr, routerLen)
+	cfgJSON := C.GoStringN(cfgStr, cfgLen)
 
-	if err := node.StartDv(network, router); err != nil {
+	if err := node.StartDv(network, router, cfgJSON); err != nil {
 		return -1
 	}
 	return 0
