@@ -1,18 +1,17 @@
 package sim
 
 import (
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
 
+	dv_table "github.com/named-data/ndnd/dv/table"
 	"github.com/named-data/ndnd/fw/core"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/ndn"
 	sig "github.com/named-data/ndnd/std/security/signer"
 	"github.com/named-data/ndnd/std/types/optional"
-	"github.com/named-data/ndnd/std/utils"
 )
 
 /*
@@ -88,7 +87,14 @@ var (
 	globalRuntime     *Runtime
 	globalClocks      sync.Map // nodeID -> *Ns3Clock
 	consumerStopFlags sync.Map // nodeID -> *int32 (atomic flag)
+	dvSpanMu          sync.Mutex
+	dvSpanByPrefix    map[string]*dvSpanMetric
 )
+
+type dvSpanMetric struct {
+	firstOriginNs int64
+	lastReceiveNs int64
+}
 
 // --- Exported CGo functions called by ns-3 C++ code ---
 
@@ -117,6 +123,34 @@ func NdndSimInit(
 	// Create a placeholder clock for the runtime (actual per-node clocks are created per node)
 	dummyClock := NewNs3Clock(0)
 	globalRuntime = NewRuntime(dummyClock)
+
+	dvSpanMu.Lock()
+	dvSpanByPrefix = make(map[string]*dvSpanMetric)
+	dvSpanMu.Unlock()
+
+	dv_table.SetPrefixEventObserver(func(ev dv_table.PrefixEvent) {
+		key := ev.Name.TlvStr()
+		ns := ev.At.UnixNano()
+
+		dvSpanMu.Lock()
+		m := dvSpanByPrefix[key]
+		if m == nil {
+			m = &dvSpanMetric{}
+			dvSpanByPrefix[key] = m
+		}
+
+		switch ev.Kind {
+		case dv_table.PrefixEventGlobalAnnounce:
+			if m.firstOriginNs == 0 || ns < m.firstOriginNs {
+				m.firstOriginNs = ns
+			}
+		case dv_table.PrefixEventAddRemotePrefix:
+			if ns > m.lastReceiveNs {
+				m.lastReceiveNs = ns
+			}
+		}
+		dvSpanMu.Unlock()
+	})
 }
 
 //export NdndSimCreateNode
@@ -291,10 +325,38 @@ func NdndSimStopDv(nodeId C.uint32_t) {
 
 //export NdndSimDestroy
 func NdndSimDestroy() {
+	dv_table.SetPrefixEventObserver(nil)
+	dvSpanMu.Lock()
+	dvSpanByPrefix = make(map[string]*dvSpanMetric)
+	dvSpanMu.Unlock()
+
 	if globalRuntime != nil {
 		globalRuntime.DestroyAll()
 		globalRuntime = nil
 	}
+}
+
+//export NdndSimGetDvUpdateSpanNs
+func NdndSimGetDvUpdateSpanNs(prefixStr *C.char, prefixLen C.int) C.int64_t {
+	if globalRuntime == nil || prefixStr == nil || int(prefixLen) == 0 {
+		return C.int64_t(-1)
+	}
+
+	prefix := C.GoStringN(prefixStr, prefixLen)
+	name, err := parseNameFromString(prefix)
+	if err != nil {
+		return C.int64_t(-1)
+	}
+	key := name.TlvStr()
+
+	dvSpanMu.Lock()
+	m := dvSpanByPrefix[key]
+	dvSpanMu.Unlock()
+	if m == nil || m.firstOriginNs == 0 || m.lastReceiveNs == 0 || m.lastReceiveNs < m.firstOriginNs {
+		return C.int64_t(-1)
+	}
+
+	return C.int64_t(m.lastReceiveNs - m.firstOriginNs)
 }
 
 //export NdndSimGetAppFaceId
@@ -469,48 +531,8 @@ func NdndSimRegisterConsumer(nodeId C.uint32_t, prefixStr *C.char, prefixLen C.i
 	}
 	clock := val.(*Ns3Clock)
 
-	var seqNo uint64
-	freq := float64(frequencyHz)
-	if freq <= 0 {
-		freq = 1.0
-	}
-	interval := time.Duration(float64(time.Second) / freq)
-
-	var stopped int32
-	consumerStopFlags.Store(uint32(nodeId), &stopped)
-
-	var sendNext func()
-	sendNext = func() {
-		if atomic.LoadInt32(&stopped) != 0 {
-			return
-		}
-
-		seq := seqNo
-		seqNo++
-
-		// Build name: prefix + seqNo as GenericNameComponent
-		iName := make(enc.Name, len(name)+1)
-		copy(iName, name)
-		iName[len(name)] = enc.NewGenericComponent(strconv.FormatUint(seq, 10))
-
-		cfg := &ndn.InterestConfig{
-			Lifetime: optional.Some(lifetime),
-			Nonce:    utils.ConvertNonce(engine.Timer().Nonce()),
-		}
-		interest, err := engine.Spec().MakeInterest(iName, cfg, nil, nil)
-		if err != nil {
-			return
-		}
-		engine.Express(interest, func(args ndn.ExpressCallbackArgs) {
-			// Data notification is handled by SimEngine.onDataReceived
-		})
-
-		// Schedule next send
-		clock.Schedule(interval, sendNext)
-	}
-
-	// Schedule first send after one interval
-	clock.Schedule(interval, sendNext)
+	stopped := startConsumerLoop(engine, clock, uint32(nodeId), name, float64(frequencyHz), lifetime)
+	consumerStopFlags.Store(uint32(nodeId), stopped)
 
 	return 0
 }

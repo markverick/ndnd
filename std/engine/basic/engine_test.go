@@ -1,6 +1,7 @@
 package basic_test
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -265,11 +266,11 @@ func TestImplicitSha256(t *testing.T) {
 // (AI GENERATED DESCRIPTION): Tests that an Interest matching a registered prefix (`/not`) is routed to its handler, which verifies the Interest and replies with a correctly‑encoded Data packet containing the string “test”.
 func TestRoute(t *testing.T) {
 	executeTest(t, func(face *face.DummyFace, engine *basic_engine.Engine, timer *basic_engine.DummyTimer) {
-		hitCnt := 0
+		var hitCnt atomic.Int32
 		spec := engine.Spec()
 
 		handler := func(args ndn.InterestHandlerArgs) {
-			hitCnt += 1
+			hitCnt.Add(1)
 			require.Equal(t, []byte(
 				"\x05\x15\x07\x10\x08\x03not\x08\timportant\x0c\x01\x05",
 			), args.RawInterest.Join())
@@ -288,7 +289,7 @@ func TestRoute(t *testing.T) {
 		prefix := tu.NoErr(enc.NameFromStr("/not"))
 		engine.AttachHandler(prefix, handler)
 		face.FeedPacket([]byte("\x05\x15\x07\x10\x08\x03not\x08\timportant\x0c\x01\x05"))
-		require.Equal(t, 1, hitCnt)
+		require.Equal(t, int32(1), hitCnt.Load())
 		buf := tu.NoErr(face.Consume())
 		require.Equal(t, enc.Buffer(
 			"\x06\x22\x07\x10\x08\x03not\x08\timportant\x14\x03\x18\x01\x00\x15\x04test"+

@@ -2,6 +2,7 @@ package face
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	enc "github.com/named-data/ndnd/std/encoding"
@@ -9,6 +10,7 @@ import (
 
 type DummyFace struct {
 	baseFace
+	mu       sync.Mutex
 	sendPkts []enc.Buffer
 }
 
@@ -50,8 +52,12 @@ func (f *DummyFace) Send(pkt enc.Wire) error {
 	if !f.running.Load() {
 		return fmt.Errorf("face is not running")
 	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	if len(pkt) == 1 {
-		f.sendPkts = append(f.sendPkts, pkt[0])
+		buf := append(enc.Buffer(nil), pkt[0]...)
+		f.sendPkts = append(f.sendPkts, buf)
 	} else if len(pkt) >= 2 {
 		newBuf := make(enc.Buffer, 0)
 		for _, buf := range pkt {
@@ -83,10 +89,13 @@ func (f *DummyFace) Consume() (enc.Buffer, error) {
 	// hack: yield to wait for packet to arrive
 	time.Sleep(10 * time.Millisecond)
 
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	if len(f.sendPkts) == 0 {
 		return nil, fmt.Errorf("no packet to consume")
 	}
-	pkt := f.sendPkts[0]
+	pkt := append(enc.Buffer(nil), f.sendPkts[0]...)
 	f.sendPkts = f.sendPkts[1:]
 	return pkt, nil
 }

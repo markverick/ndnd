@@ -129,6 +129,16 @@ func (dv *Router) updateFib() {
 			Append(router.Name()...)
 		register(proute, fes, 0)
 
+		// Add entry for the router's DV advertisement data namespace.
+		// advert_data.dataFetch() consumes names under
+		// /localhop/<router>/DV/ADV/<boot>/<seq> and expects forwarding to
+		// follow the same nexthops as the router itself.
+		advRoute := enc.LOCALHOP.
+			Append(router.Name()...).
+			Append(enc.NewKeywordComponent("DV")).
+			Append(enc.NewKeywordComponent("ADV"))
+		register(advRoute, fes, 0)
+
 		// Add entries to all prefixes announced by this router
 		for _, prefix := range dv.pfx.GetRouter(router.Name()).Prefixes {
 			// Use the same nexthop entries as the exit router itself

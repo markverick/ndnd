@@ -23,9 +23,8 @@ import (
 // CmdTraffic returns the parent "traffic" command with producer/consumer subcommands.
 func CmdTraffic() *cobra.Command {
 	cmd := &cobra.Command{
-		GroupID: "tools",
-		Use:     "traffic",
-		Short:   "NDN traffic generator (producer and consumer)",
+		Use:   "traffic",
+		Short: "NDN traffic generator (producer and consumer)",
 	}
 	cmd.AddCommand(cmdTrafficProducer())
 	cmd.AddCommand(cmdTrafficConsumer())

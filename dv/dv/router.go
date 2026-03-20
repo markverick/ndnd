@@ -143,16 +143,19 @@ func NewRouter(config *config.Config, engine ndn.Engine) (*Router, error) {
 		},
 	}
 
-	// Initialize advertisement module
+	// Initialize advertisement module.
+	// NOTE: bootTime must NOT be computed here — NowFunc may still point to
+	// the real wall clock at construction time.  For production Start() and
+	// simulation Init(), bootTime is computed lazily via dv.NowFunc() at the
+	// start of those methods, after any override (e.g. SimDvRouter) is in place.
+	// createPrefixTable() is also deferred for the same reason: it embeds
+	// bootTime into pfxSvs, which would then compare incoming BootstrapTimes
+	// against the wrong clock.
 	dv.advert = advertModule{
-		dv:       dv,
-		bootTime: max(uint64(core.Now().Unix()), 1),
-		seq:      0,
-		objDir:   storage.NewMemoryFifoDir(32), // keep last few advertisements
+		dv:     dv,
+		seq:    0,
+		objDir: storage.NewMemoryFifoDir(32), // keep last few advertisements
 	}
-
-	// Create prefix table
-	dv.createPrefixTable()
 
 	// Create DV tables
 	dv.neighbors = table.NewNeighborTable(config, dv.nfdc)
@@ -171,6 +174,11 @@ func (dv *Router) String() string {
 func (dv *Router) Start() (err error) {
 	log.Info(dv, "Starting DV router", "version", utils.NDNdVersion)
 	defer log.Info(dv, "Stopped DV router")
+
+	// Lazily initialize bootTime and prefix table so that any NowFunc
+	// override (e.g. from simulation) is in effect before pfxSvs is created.
+	dv.advert.bootTime = max(uint64(dv.NowFunc().Unix()), 1)
+	dv.createPrefixTable()
 
 	// Initialize channels
 	dv.stop = make(chan bool, 1)
@@ -239,6 +247,15 @@ func (dv *Router) Stop() {
 // RunDeadcheck() using the simulation clock.
 func (dv *Router) Init() error {
 	log.Info(dv, "Initializing DV router (sim)", "version", utils.NDNdVersion)
+
+	// Lazily initialize bootTime and prefix table so that the NowFunc
+	// override installed by SimDvRouter (clock.Now) is used instead of the
+	// wall clock.  If bootTime were set at NewRouter() time, it would carry
+	// the real Unix timestamp (~1773989593 in 2026), which SVS on every peer
+	// would reject as "far future" because the simulation clock starts near
+	// the Unix epoch.
+	dv.advert.bootTime = max(uint64(dv.NowFunc().Unix()), 1)
+	dv.createPrefixTable()
 
 	// Start object client
 	dv.client.Start()
@@ -469,5 +486,7 @@ func (dv *Router) createPrefixTable() {
 		if _, _, err := dv.pfxSvs.Publish(w); err != nil {
 			log.Error(dv, "Failed to publish prefix table update", "err", err)
 		}
+	}, table.PrefixTableOptions{
+		NowFunc: dv.NowFunc,
 	})
 }

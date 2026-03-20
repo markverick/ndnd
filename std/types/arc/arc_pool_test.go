@@ -30,6 +30,10 @@ func TestArcPool(t *testing.T) {
 	require.Equal(t, int32(0), arc.Dec()) // release
 	arc3 := pool.Get()
 	require.Equal(t, 42, *arc3.Load())
-	require.Equal(t, 42, *ref) // reused (not deteministic though)
-	require.True(t, ref == arc3.Load())
+
+	// sync.Pool reuse is intentionally non-deterministic; assert reset semantics,
+	// not pointer identity.
+	if ref == arc3.Load() {
+		require.Equal(t, 42, *ref)
+	}
 }

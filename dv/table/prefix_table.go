@@ -2,6 +2,8 @@ package table
 
 import (
 	"slices"
+	"sync"
+	"time"
 
 	"github.com/named-data/ndnd/dv/config"
 	"github.com/named-data/ndnd/dv/tlv"
@@ -12,8 +14,44 @@ import (
 type PrefixTable struct {
 	config  *config.Config
 	publish func(enc.Wire)
+	now     func() time.Time
 	routers map[uint64]*PrefixTableRouter
 	me      *PrefixTableRouter
+}
+
+type PrefixTableOptions struct {
+	NowFunc func() time.Time
+}
+
+type PrefixEventKind int
+
+const (
+	PrefixEventGlobalAnnounce PrefixEventKind = iota
+	PrefixEventAddRemotePrefix
+)
+
+type PrefixEvent struct {
+	Kind   PrefixEventKind
+	At     time.Time
+	Name   enc.Name
+	Router enc.Name
+}
+
+var (
+	prefixEventObserverMu sync.RWMutex
+	prefixEventObserver   func(PrefixEvent)
+)
+
+func SetPrefixEventObserver(observer func(PrefixEvent)) {
+	prefixEventObserverMu.Lock()
+	prefixEventObserver = observer
+	prefixEventObserverMu.Unlock()
+}
+
+func getPrefixEventObserver() func(PrefixEvent) {
+	prefixEventObserverMu.RLock()
+	defer prefixEventObserverMu.RUnlock()
+	return prefixEventObserver
 }
 
 type PrefixTableRouter struct {
@@ -34,10 +72,16 @@ type PrefixNextHop struct {
 }
 
 // (AI GENERATED DESCRIPTION): Creates and returns a new PrefixTable, initializing its configuration, publish callback, router registry, and setting the local router based on the provided configuration.
-func NewPrefixTable(config *config.Config, publish func(enc.Wire)) *PrefixTable {
+func NewPrefixTable(config *config.Config, publish func(enc.Wire), opts ...PrefixTableOptions) *PrefixTable {
+	nowFn := time.Now
+	if len(opts) > 0 && opts[0].NowFunc != nil {
+		nowFn = opts[0].NowFunc
+	}
+
 	pt := &PrefixTable{
 		config:  config,
 		publish: publish,
+		now:     nowFn,
 		routers: make(map[uint64]*PrefixTableRouter),
 		me:      nil,
 	}
@@ -149,6 +193,13 @@ func (pt *PrefixTable) publishEntry(hash string) {
 
 	if entry.Cost < config.CostPfxInfinity {
 		log.Info(pt, "Global announce", "name", entry.Name, "cost", entry.Cost)
+		if obs := getPrefixEventObserver(); obs != nil {
+			obs(PrefixEvent{
+				Kind: PrefixEventGlobalAnnounce,
+				At:   pt.now(),
+				Name: entry.Name.Clone(),
+			})
+		}
 		op := tlv.PrefixOpList{
 			ExitRouter: &tlv.Destination{Name: pt.config.RouterName()},
 			PrefixOpAdds: []*tlv.PrefixOpAdd{{
@@ -191,6 +242,14 @@ func (pt *PrefixTable) Apply(wire enc.Wire) (dirty bool) {
 
 	for _, add := range ops.PrefixOpAdds {
 		log.Info(pt, "Add remote prefix", "router", ops.ExitRouter.Name, "name", add.Name, "cost", add.Cost)
+		if obs := getPrefixEventObserver(); obs != nil {
+			obs(PrefixEvent{
+				Kind:   PrefixEventAddRemotePrefix,
+				At:     pt.now(),
+				Name:   add.Name.Clone(),
+				Router: ops.ExitRouter.Name.Clone(),
+			})
+		}
 		router.Prefixes[add.Name.TlvStr()] = &PrefixEntry{
 			Name: add.Name.Clone(),
 			Cost: add.Cost,
