@@ -195,7 +195,6 @@ func (n *Node) StartDv(network, router string, cfgJSON string) error {
 	cfg := config.DefaultConfig()
 	cfg.Network = network
 	cfg.Router = router
-	cfg.KeyChainUri = "insecure"
 	if cfgJSON != "" {
 		if err := json.Unmarshal([]byte(cfgJSON), cfg); err != nil {
 			return fmt.Errorf("bad DV config JSON: %w", err)
@@ -203,8 +202,20 @@ func (n *Node) StartDv(network, router string, cfgJSON string) error {
 		// Restore fields that must not be overridden from the outside
 		cfg.Network = network
 		cfg.Router = router
-		cfg.KeyChainUri = "insecure"
 	}
+
+	// Set up Ed25519 trust (same pipeline as emulation)
+	trust, err := GetSimTrust(network)
+	if err != nil {
+		return fmt.Errorf("failed to init trust: %w", err)
+	}
+	kc, store, anchors, err := trust.NodeKeychain(router)
+	if err != nil {
+		return fmt.Errorf("failed to build node keychain: %w", err)
+	}
+	cfg.KeyChain = kc
+	cfg.Store = store
+	cfg.TrustAnchors = anchors
 
 	sdv, err := NewSimDvRouter(n.clock, n.appEngine, cfg)
 	if err != nil {

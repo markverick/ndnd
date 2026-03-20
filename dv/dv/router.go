@@ -84,12 +84,29 @@ func NewRouter(config *config.Config, engine ndn.Engine) (*Router, error) {
 		return nil, err
 	}
 
-	// Create packet store
-	store := storage.NewMemoryStore()
+	// Create packet store (use pre-built store if provided)
+	var store ndn.Store
+	if config.Store != nil {
+		store = config.Store
+	} else {
+		store = storage.NewMemoryStore()
+	}
 
 	// Create security configuration
 	var trust *sec.TrustConfig = nil
-	if config.KeyChainUri == "insecure" {
+	if config.KeyChain != nil {
+		// Use pre-built keychain (e.g. from simulation trust setup)
+		schema, err := trust_schema.NewLvsSchema(config.SchemaBytes())
+		if err != nil {
+			return nil, err
+		}
+		anchors := config.TrustAnchorNames()
+		trust, err = sec.NewTrustConfig(config.KeyChain, schema, anchors)
+		if err != nil {
+			return nil, err
+		}
+		trust.UseDataNameFwHint = true
+	} else if config.KeyChainUri == "insecure" {
 		log.Warn(nil, "Security is disabled - insecure mode")
 	} else {
 		kc, err := keychain.NewKeyChain(config.KeyChainUri, store)

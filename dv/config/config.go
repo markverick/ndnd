@@ -6,6 +6,7 @@ import (
 	"time"
 
 	enc "github.com/named-data/ndnd/std/encoding"
+	"github.com/named-data/ndnd/std/ndn"
 	mgmt "github.com/named-data/ndnd/std/ndn/mgmt_2022"
 )
 
@@ -41,6 +42,11 @@ type Config struct {
 	TrustAnchors []string `json:"trust_anchors"`
 	// List of permanent neighbors.
 	Neighbors []Neighbor `json:"neighbors"`
+
+	// Pre-built KeyChain (bypasses KeyChainUri if set).
+	KeyChain ndn.KeyChain `json:"-"`
+	// Pre-built Store (bypasses internal store creation if set).
+	Store ndn.Store `json:"-"`
 
 	// Parsed Global Prefix
 	networkNameN enc.Name

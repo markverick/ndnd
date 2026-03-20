@@ -188,10 +188,11 @@ func (fwd *SimForwarder) ReceivePacket(faceID uint64, frame []byte) {
 	}
 
 	if parsed.LpPacket != nil {
-		// LP-wrapped: extract PIT token and inner fragment
+		// LP-wrapped: extract PIT token, NextHopFaceId, and inner fragment
 		lp := parsed.LpPacket
 		pkt.PitToken = lp.PitToken
 		pkt.CongestionMark = lp.CongestionMark
+		pkt.NextHopFaceID = lp.NextHopFaceId
 
 		fragment := lp.Fragment
 		if len(fragment) == 0 {

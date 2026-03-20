@@ -230,13 +230,15 @@ func (e *SimEngine) Express(interest *ndn.EncodedInterest, callback ndn.ExpressC
 			}
 		})
 
-		// LP-wrap with PIT token
-		lpPkt := &spec.Packet{
-			LpPacket: &spec.LpPacket{
-				PitToken: tokenBytes,
-				Fragment: wire,
-			},
+		// LP-wrap with PIT token (and NextHopFaceId if set)
+		lpHdr := &spec.LpPacket{
+			PitToken: tokenBytes,
+			Fragment: wire,
 		}
+		if hop, ok := interest.Config.NextHopId.Get(); ok {
+			lpHdr.NextHopFaceId.Set(hop)
+		}
+		lpPkt := &spec.Packet{LpPacket: lpHdr}
 		encoder := spec.PacketEncoder{}
 		encoder.Init(lpPkt)
 		wire = encoder.Encode(lpPkt)
