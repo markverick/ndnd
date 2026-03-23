@@ -81,6 +81,7 @@ def scenario(ndn: Minindn, network='/minindn'):
     producer_prefixes = {sync_prefix, f'{network}/svs/{producer.name}'}
     dv_util.wait_prefix_pet_ready({node: producer_prefixes for node in consumers}, deadline=60)
 
+    beg = time.time()
     # Step 5: Wait for publish → BIER sync interest propagation → unicast data fetch.
     # 20s delay + 30s SVS sync cycle + 20s fetch buffer = 70s total.
     info(f'Waiting for message propagation from {producer.name} (70s)...\n')
@@ -90,6 +91,7 @@ def scenario(ndn: Minindn, network='/minindn'):
     for node in chat_nodes:
         node.cmd("pkill -f 'ndnd svs-chat' 2>/dev/null; true")
     time.sleep(1)  # let log buffers flush
+    print(time.time() - beg, "seconds elapsed")
 
     failures = []
     for consumer in consumers:

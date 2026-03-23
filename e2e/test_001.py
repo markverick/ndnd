@@ -18,7 +18,7 @@ def scenario(ndn: Minindn, network='/minindn'):
     AppManager(ndn, ndn.net.hosts, NDNd_FW, network=network)
 
     dv_util.setup(ndn, network=network)
-    dv_util.converge(ndn.net.hosts, network=network)
+    dv_util.converge(ndn.net.hosts, network=network, deadline=20)
 
     info('Testing file transfer\n')
     test_file = '/tmp/test.bin'
@@ -42,7 +42,7 @@ def scenario(ndn: Minindn, network='/minindn'):
 
     # New pipeline requires PET propagation before Interests can be forwarded.
     expected = {node: set(put_prefixes) for node in ndn.net.hosts}
-    dv_util.wait_prefix_pet_ready(expected, deadline=180)
+    dv_util.wait_prefix_pet_ready(expected, deadline=20)
 
     # Prefix traffic should remain PET-driven; app prefixes must not be injected into FIB.
     for node in ndn.net.hosts:
