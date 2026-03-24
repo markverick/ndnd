@@ -568,6 +568,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 			}
 		}
 
+		// TODO - this branch feels weird / not needed
 		if petFound {
 			for _, er := range petEntry.EgressRouters {
 				if len(er) > 0 && er[0].Equal(enc.LOCALHOP) {
@@ -650,65 +651,6 @@ func (t *Thread) processBierInterest(packet *defn.Pkt, pitEntry table.PitEntry, 
 	bierReplicate(t, packet, pitEntry, inFace, func(pkt *defn.Pkt, pit table.PitEntry, nexthop, in uint64) bool {
 		return t.processOutgoingInterest(pkt, pit, nexthop, in)
 	})
-}
-
-// twoPhaseLookup resolves next-hops for an Interest.
-// hasBier indicates that a BIER bit-string is already encoded on the packet;
-// in that case the PET→egress mapping is skipped so a transit router does not
-// re-query and potentially re-encode a new bit-string. Only the ingress BFIR
-// performs the PET egress lookup.
-func (t *Thread) twoPhaseLookup(lookupName enc.Name, egressRouter enc.Name, routerName enc.Name, routerNameSet bool, hasBier bool) (
-	nextLocal []*table.PetNextHop,
-	nextNet []StrategyCandidateHop,
-	isMulticast bool,
-) {
-	// If EgressRouter is set and matches this router, forward to local app faces via PET.
-	if len(egressRouter) > 0 {
-		if routerNameSet && egressRouter.Equal(routerName) {
-			petEntry, petFound := table.Pet.FindLongestPrefixEnc(lookupName)
-			if petFound {
-				for i := range petEntry.NextHops {
-					nextLocal = append(nextLocal, &petEntry.NextHops[i])
-				}
-			}
-			return nextLocal, nextNet, false
-		} else {
-			for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(egressRouter) {
-				nextNet = append(nextNet, StrategyCandidateHop{
-					HopEntry:     nextHop,
-					EgressRouter: egressRouter,
-				})
-			}
-			return nextLocal, nextNet, false
-		}
-	}
-
-	// No EgressRouter: try local PET first.
-	petEntry, petFound := table.Pet.FindLongestPrefixEnc(lookupName)
-	if !petFound {
-		return nextLocal, nextNet, false
-	}
-	for i := range petEntry.NextHops {
-		nextLocal = append(nextLocal, &petEntry.NextHops[i])
-	}
-
-	// When a BIER bit-string is already present the packet is on a transit router;
-	// the BIFT + bit-string fully determines forwarding — no PET egress needed.
-	if hasBier {
-		return nextLocal, nextNet, false
-	}
-
-	// Ingress (BFIR) path: map PET egress routers to network next-hops.
-	for _, er := range petEntry.EgressRouters {
-		for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(er) {
-			nextNet = append(nextNet, StrategyCandidateHop{
-				HopEntry:     nextHop,
-				EgressRouter: er,
-			})
-		}
-	}
-	isMulticast = petEntry.Multicast
-	return nextLocal, nextNet, isMulticast
 }
 
 func (t *Thread) processOutgoingInterest(
