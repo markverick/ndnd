@@ -33,6 +33,22 @@ const (
 	fwMulticastTransit
 )
 
+var forwardPipelineStrings = map[forwardPipeline]string{
+	fwUnicastTransit:   "unicast-transit",
+	fwUnicastIngress:   "unicast-ingress",
+	fwUnicastEgress:    "unicast-egress",
+	fwMulticastIngress: "multicast-ingress",
+	fwMulticastEgress:  "multicast-egress",
+	fwMulticastTransit: "multicast-transit",
+}
+
+func (p forwardPipeline) String() string {
+	if s, ok := forwardPipelineStrings[p]; ok {
+		return s
+	}
+	return fmt.Sprintf("forwardPipeline(%d)", int(p))
+}
+
 func (p forwardPipeline) isUnicast() bool {
 	return p == fwUnicastTransit || p == fwUnicastIngress || p == fwUnicastEgress
 }
@@ -302,7 +318,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 		petLookup = true
 		petEntry, petFound = table.Pet.FindLongestPrefixEnc(lookupName)
     // TODO - i think we can remove this isLocalHop? we should be advertising with Multicast in PET for localhop endpoints
-		if isLocalHop || (petFound && petEntry.Multicast) {
+		if petFound && petEntry.Multicast {
 			pipeline = fwMulticastIngress
 		} else {
 			pipeline = fwUnicastIngress
