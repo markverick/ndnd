@@ -285,24 +285,6 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	// If the first component is /localhop, we do not forward interests received
 	// on non-local faces to non-local faces
 	isLocalHop := packet.Name.At(0).Equal(enc.LOCALHOP)
-	// Detect DV advertisement fetches: /localhop/<net>/<router>/DV/ADV/...
-	isDvAdvLocalhop := isLocalHop && len(packet.Name) >= 5 &&
-		packet.Name[3].Equal(enc.NewKeywordComponent("DV")) &&
-		packet.Name[4].Equal(enc.NewKeywordComponent("ADV"))
-	// Detect DV SVS control traffic: /<net>/DV/PES/svs/... or /localhop/<net>/DV/PES/svs/...
-	isDvSvs := false
-	if isLocalHop {
-		isDvSvs = len(packet.Name) >= 5 &&
-			packet.Name[2].Equal(enc.NewKeywordComponent("DV")) &&
-			packet.Name[3].Equal(enc.NewKeywordComponent("PES")) &&
-			packet.Name[4].Equal(enc.NewKeywordComponent("svs"))
-	} else {
-		isDvSvs = len(packet.Name) >= 4 &&
-			packet.Name[1].Equal(enc.NewKeywordComponent("DV")) &&
-			packet.Name[2].Equal(enc.NewKeywordComponent("PES")) &&
-			packet.Name[3].Equal(enc.NewKeywordComponent("svs"))
-	}
-
 	var pipeline forwardPipeline
 	var petEntry table.PetEntry
 	var petFound bool
@@ -311,12 +293,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 		// TODO - distinguish fwMulticastEgress
 		pipeline = fwMulticastTransit
 	} else if len(packet.EgressRouter) > 0 {
-		if isDvSvs {
-			packet.EgressRouter = nil
-			petLookup = true
-			petEntry, petFound = table.Pet.FindLongestPrefixEnc(lookupName)
-			pipeline = fwMulticastIngress
-		} else if routerNameSet && packet.EgressRouter.Equal(routerName) {
+		if routerNameSet && packet.EgressRouter.Equal(routerName) {
 			pipeline = fwUnicastEgress
 		} else {
 			pipeline = fwUnicastTransit
@@ -324,12 +301,22 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	} else {
 		petLookup = true
 		petEntry, petFound = table.Pet.FindLongestPrefixEnc(lookupName)
-		if isDvSvs || packet.Name.At(0).Equal(enc.LOCALHOP) || (petFound && petEntry.Multicast) {
+    // TODO - i think we can remove this isLocalHop? we should be advertising with Multicast in PET for localhop endpoints
+		if isLocalHop || (petFound && petEntry.Multicast) {
 			pipeline = fwMulticastIngress
 		} else {
 			pipeline = fwUnicastIngress
 		}
 	}
+	core.Log.Trace(t, "Interest pipeline decision",
+		"name", packet.Name,
+		"lookup", lookupName,
+		"pipeline", pipeline,
+		"petFound", petFound,
+		"isLocalHop", isLocalHop,
+		"egressRouter", len(packet.EgressRouter) > 0,
+		"bier", len(packet.Bier) > 0,
+	)
 
 	// Get strategy for name. This may not be the final strategy,
 	// we need to get a prelim strategy for CS though for AfterContentStoreHit
@@ -421,16 +408,6 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 			petLookup = true
 		}
 
-		// drop if no possible egress / local faces found
-		if !petFound && !strategyName.Equal(defn.BROADCAST_STRATEGY) && !isDvAdvLocalhop && !isDvSvs {
-			core.Log.Trace(t, "Dropping Interest: no PET entry",
-				"name", packet.Name,
-				"lookup", lookupName,
-				"pipeline", pipeline,
-			)
-			return
-		}
-
 		if petFound {
 			petLocalHops = make([]*table.PetNextHop, 0, len(petEntry.NextHops))
 			for i := range petEntry.NextHops {
@@ -449,23 +426,23 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 		}
 	}
 
-	// nextLocal, nextNet, isMulticast := t.twoPhaseLookup(lookupName, packet.EgressRouter, routerName, routerNameSet, len(packet.Bier) > 0)
-
 	localFacesOnly := incomingFace.Scope() != defn.Local && isLocalHop
 
 	// Unicast Delivery making use of FIB -> FIBStrategy -> unicast delivery
 	if pipeline.isUnicast() {
+		core.Log.Trace(t, "Unicast pipeline",
+			"name", packet.Name,
+			"lookup", lookupName,
+			"petFound", petFound,
+			"localHop", isLocalHop,
+			"localFacesOnly", localFacesOnly,
+		)
 		// Deliver to local faces if there exist such legal local faces
 		if len(petLocalHops) > 0 {
 			core.Log.Trace(t, "Local Egress captures the Interest", "name", packet.Name)
 			packet.EgressRouter = nil
 			// TODO: micro-strategy dispatch per PIT in-record
 			t.processOutgoingInterest(packet, pitEntry, petLocalHops[0].FaceID, incomingFace.FaceID())
-			// For broadcast-style control traffic (e.g., localhop DV or SVS),
-			// continue to network forwarding even after local delivery.
-			if !isLocalHop && !strategyName.Equal(defn.BROADCAST_STRATEGY) {
-				return
-			}
 		}
 
 		// FIB lookup to get the next network hops
@@ -486,29 +463,22 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 					})
 				}
 			}
-		} else if strategyName.Equal(defn.BROADCAST_STRATEGY) || isDvAdvLocalhop {
-			er := enc.Name{enc.LOCALHOP, enc.NewGenericComponent("neighbors")}
-			for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(er) {
-				nextNet = append(nextNet, StrategyCandidateHop{
-					HopEntry:     nextHop,
-					EgressRouter: er,
-				})
-			}
-		} else if isDvSvs {
+		} else {
+			// Fall back to FIB lookup on the Interest name (or forwarding hint)
 			for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(lookupName) {
 				nextNet = append(nextNet, StrategyCandidateHop{
-					HopEntry:     nextHop,
-					EgressRouter: nil,
+					HopEntry: nextHop,
 				})
 			}
-		} else {
-			core.Log.Trace(t, "Unicast forwarding: no PET and no fallback UNREACHABLE",
+		}
+
+		if len(nextNet) == 0 {
+			core.Log.Trace(t, "Unicast forwarding: no PET and no FIB nexthops",
 				"name", packet.Name,
 				"lookup", lookupName,
 				"pipeline", pipeline,
 				"strategy", strategyName,
-				"isDvAdvLocalhop", isDvAdvLocalhop,
-				"isDvSvs", isDvSvs,
+				"isLocalHop", isLocalHop,
 			)
 		}
 
@@ -538,6 +508,11 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 		}
 
 		if len(allowedNetNexthops) > 0 {
+			core.Log.Trace(t, "Unicast forward",
+				"name", packet.Name,
+				"allowedNet", len(allowedNetNexthops),
+				"localFacesOnly", localFacesOnly,
+			)
 			// Forward using a unicast strategy from FibStrategyTable
 			// Below does a FibStrategyTable lookup, but we only have one strategy rn
 			// so we manually use bestRouteStrategy for testing
@@ -555,6 +530,13 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	// Multicast delivery making use of BIFT -> MulticastStrategyTable -> multicast delivery
 	// Currently just overrides /localhop to a broadcast override and manual BIER code
 	if pipeline.isMulticast() {
+		core.Log.Trace(t, "Multicast pipeline",
+			"name", packet.Name,
+			"lookup", lookupName,
+			"petFound", petFound,
+			"localHop", isLocalHop,
+			"bier", len(packet.Bier),
+		)
 		// Deliver to local faces if there exist such legal local faces
 		deliverToLocal := len(petLocalHops) > 0
 		if deliverToLocal {
@@ -565,29 +547,39 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 				t.processOutgoingInterest(packet, pitEntry, localHop.FaceID, incomingFace.FaceID())
 			}
 			if !IsBierEnabled() {
-				if !isDvSvs && !isLocalHop {
+				if !isLocalHop {
 					return
 				}
 			}
 		}
 
-		if isDvSvs && !isLocalHop {
-			er := enc.Name{enc.LOCALHOP, enc.NewGenericComponent("neighbors")}
-			for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(er) {
-				// Exclude incoming face
-				if nextHop.Nexthop == packet.IncomingFaceID {
-					continue
-				}
-				// Exclude non-local faces for localhop enforcement
-				if localFacesOnly {
-					if face := dispatch.GetFace(nextHop.Nexthop); face != nil && face.Scope() != defn.Local {
-						continue
+		if petFound {
+			for _, er := range petEntry.EgressRouters {
+				if len(er) > 0 && er[0].Equal(enc.LOCALHOP) {
+					core.Log.Trace(t, "Multicast localhop egress via PET",
+						"name", packet.Name,
+						"egress", er,
+					)
+					for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(er) {
+						// Enforce localhop: only forward to local faces when incoming is non-local.
+						if localFacesOnly {
+							if face := dispatch.GetFace(nextHop.Nexthop); face != nil && face.Scope() != defn.Local {
+								continue
+							}
+						}
+						// Exclude incoming face
+						if nextHop.Nexthop == packet.IncomingFaceID {
+							continue
+						}
+						// Exclude faces that have an in-record for this interest
+						if pitEntry.InRecords()[nextHop.Nexthop] != nil {
+							continue
+						}
+						t.processOutgoingInterest(packet, pitEntry, nextHop.Nexthop, incomingFace.FaceID())
 					}
+					return
 				}
-				// For DV SVS control, do not suppress forwarding based on PIT in-records.
-				t.processOutgoingInterest(packet, pitEntry, nextHop.Nexthop, incomingFace.FaceID())
 			}
-			return
 		}
 
 		if IsBierEnabled() && !isLocalHop {
@@ -621,6 +613,10 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 		}
 
 		if isLocalHop && !petFound {
+			core.Log.Trace(t, "Localhop multicast: no PET, forwarding to neighbors",
+				"name", packet.Name,
+				"pipeline", pipeline,
+			)
 			er := enc.Name{enc.LOCALHOP, enc.NewGenericComponent("neighbors")}
 			for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(er) {
 				// Enforce localhop: only forward to local faces when incoming is non-local.
