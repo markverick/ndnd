@@ -297,17 +297,17 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 
 	routerName, routerNameSet := CfgRouterName()
 
-	// TODO - use an actual table instead of these if statements
-	// If the first component is /localhop, we do not forward interests received
-	// on non-local faces to non-local faces
 	isLocalHop := packet.Name.At(0).Equal(enc.LOCALHOP)
 	var pipeline forwardPipeline
 	var petEntry table.PetEntry
 	var petFound bool
 	petLookup := false
-	if len(packet.Bier) > 0 {
-		// TODO - distinguish fwMulticastEgress
-		pipeline = fwMulticastTransit
+	if IsBierEnabled() && len(packet.Bier) > 0 {
+		if BierGetBit(BierClone(packet.Bier), CfgBierIndex()) {
+			pipeline = fwMulticastEgress
+		} else {
+			pipeline = fwMulticastTransit
+		}
 	} else if len(packet.EgressRouter) > 0 {
 		if routerNameSet && packet.EgressRouter.Equal(routerName) {
 			pipeline = fwUnicastEgress
