@@ -317,7 +317,6 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	} else {
 		petLookup = true
 		petEntry, petFound = table.Pet.FindLongestPrefixEnc(lookupName)
-    // TODO - i think we can remove this isLocalHop? we should be advertising with Multicast in PET for localhop endpoints
 		if petFound && petEntry.Multicast {
 			pipeline = fwMulticastIngress
 		} else {
@@ -628,32 +627,6 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 			return
 		}
 
-		if isLocalHop && !petFound {
-			core.Log.Trace(t, "Localhop multicast: no PET, forwarding to neighbors",
-				"name", packet.Name,
-				"pipeline", pipeline,
-			)
-			er := enc.Name{enc.LOCALHOP, enc.NewGenericComponent("neighbors")}
-			for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(er) {
-				// Enforce localhop: only forward to local faces when incoming is non-local.
-				if localFacesOnly {
-					if face := dispatch.GetFace(nextHop.Nexthop); face != nil && face.Scope() != defn.Local {
-						continue
-					}
-				}
-				// Exclude incoming face
-				if nextHop.Nexthop == packet.IncomingFaceID {
-					continue
-				}
-				// Exclude faces that have an in-record for this interest
-				if pitEntry.InRecords()[nextHop.Nexthop] != nil {
-					continue
-				}
-				t.processOutgoingInterest(packet, pitEntry, nextHop.Nexthop, incomingFace.FaceID())
-			}
-			return
-		}
-
 		if !petFound {
 			core.Log.Trace(t, "localhop, petEntry = nil, UNREACHABLE")
 			return
@@ -666,11 +639,6 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 			}
 		}
 		return
-
-		// is this needed here or will this be later?
-		// if BierIsZero(packet.Bier) {
-		// 	return
-		// }
 	}
 }
 
