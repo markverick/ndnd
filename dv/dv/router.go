@@ -285,41 +285,39 @@ func (dv *Router) register() (err error) {
 	}
 
 	for _, prefix := range pfxs {
-		dv.nfdc.Exec(nfdc.NfdMgmtCmd{
-			Module: "pet",
-			Cmd:    "add-nexthop",
-			Args: &mgmt.ControlArgs{
-				Name: prefix,
-			},
-			Retries: -1,
-		})
+		dv.execMgmtRetry("pet", "add-nexthop", &mgmt.ControlArgs{
+			Name: prefix,
+		}, -1)
 	}
 	// Allow outgoing local-prefix-sync Interests to use two-phase forwarding.
 	// Incoming Interests still terminate locally on the same prefix.
 	// Add multicast flag to the PET announcement
-	dv.nfdc.Exec(nfdc.NfdMgmtCmd{
-		Module: "pet",
-		Cmd:    "add-egress",
-		Args: &mgmt.ControlArgs{
-			Name:   dv.pfx.SyncPrefix(),
-			Egress: &mgmt.EgressRecord{Name: neighborsPrefix.Clone()},
-			Flags:  optional.Some(uint64(1)),
-		},
-		Retries: -1,
-	})
+	dv.execMgmtRetry("pet", "add-egress", &mgmt.ControlArgs{
+		Name:   dv.pfx.SyncPrefix(),
+		Egress: &mgmt.EgressRecord{Name: neighborsPrefix.Clone()},
+		Flags:  optional.Some(uint64(1)),
+	}, -1)
 	// Set Advertisement Sync to localhop neighbors
-	dv.nfdc.Exec(nfdc.NfdMgmtCmd{
-		Module: "pet",
-		Cmd:    "add-egress",
-		Args: &mgmt.ControlArgs{
-			Name:   dv.config.AdvertisementSyncPrefix(),
-			Egress: &mgmt.EgressRecord{Name: neighborsPrefix.Clone()},
-			Flags:  optional.Some(uint64(1)),
-		},
-		Retries: -1,
-	})
+	dv.execMgmtRetry("pet", "add-egress", &mgmt.ControlArgs{
+		Name:   dv.config.AdvertisementSyncPrefix(),
+		Egress: &mgmt.EgressRecord{Name: neighborsPrefix.Clone()},
+		Flags:  optional.Some(uint64(1)),
+	}, -1)
 
 	return nil
+}
+
+func (dv *Router) execMgmtRetry(module, cmd string, args *mgmt.ControlArgs, retries int) {
+	for i := 0; i < retries || retries < 0; i++ {
+		if _, err := dv.engine.ExecMgmtCmd(module, cmd, args); err != nil {
+			log.Error(dv, "Forwarder command failed", "err", err, "attempt", i,
+				"module", module, "cmd", cmd, "args", args)
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		time.Sleep(1 * time.Millisecond)
+		break
+	}
 }
 
 // createFaces creates faces to all neighbors.
