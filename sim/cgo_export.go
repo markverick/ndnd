@@ -89,6 +89,13 @@ var (
 	consumerStopFlags sync.Map // nodeID -> *int32 (atomic flag)
 	dvSpanMu          sync.Mutex
 	dvSpanByPrefix    map[string]*dvSpanMetric
+
+	// Routing convergence: tracks when each node has reachable routes
+	// to all other nodes. Purely event-driven via RouterReachableEvent.
+	routingConvMu       sync.Mutex
+	routingConvReachable map[string]map[string]bool // nodeRouter -> set of reachableRouters
+	routingConvTimeNs   int64                       // sim timestamp when convergence completed (0 = not yet)
+	routingConvStartNs  int64                       // sim timestamp of first RouterReachable event
 )
 
 type dvSpanMetric struct {
@@ -128,6 +135,12 @@ func NdndSimInit(
 	dvSpanByPrefix = make(map[string]*dvSpanMetric)
 	dvSpanMu.Unlock()
 
+	routingConvMu.Lock()
+	routingConvReachable = make(map[string]map[string]bool)
+	routingConvTimeNs = 0
+	routingConvStartNs = 0
+	routingConvMu.Unlock()
+
 	dv_table.SetPrefixEventObserver(func(ev dv_table.PrefixEvent) {
 		key := ev.Name.TlvStr()
 		ns := ev.At.UnixNano()
@@ -150,6 +163,33 @@ func NdndSimInit(
 			}
 		}
 		dvSpanMu.Unlock()
+	})
+
+	dv_table.SetRouterReachableObserver(func(ev dv_table.RouterReachableEvent) {
+		nodeKey := ev.NodeRouter.String()
+		reachKey := ev.ReachableRouter.String()
+		ns := ev.At.UnixNano()
+
+		routingConvMu.Lock()
+		defer routingConvMu.Unlock()
+
+		if routingConvStartNs == 0 || ns < routingConvStartNs {
+			routingConvStartNs = ns
+		}
+
+		s := routingConvReachable[nodeKey]
+		if s == nil {
+			s = make(map[string]bool)
+			routingConvReachable[nodeKey] = s
+		}
+		s[reachKey] = true
+
+		// Record the sim time of the last event that could complete convergence.
+		// The actual completeness check happens in NdndSimGetRoutingConvergenceNs
+		// because we don't know totalNodes until then.
+		if ns > routingConvTimeNs {
+			routingConvTimeNs = ns
+		}
 	})
 }
 
@@ -326,9 +366,17 @@ func NdndSimStopDv(nodeId C.uint32_t) {
 //export NdndSimDestroy
 func NdndSimDestroy() {
 	dv_table.SetPrefixEventObserver(nil)
+	dv_table.SetRouterReachableObserver(nil)
+
 	dvSpanMu.Lock()
 	dvSpanByPrefix = make(map[string]*dvSpanMetric)
 	dvSpanMu.Unlock()
+
+	routingConvMu.Lock()
+	routingConvReachable = make(map[string]map[string]bool)
+	routingConvTimeNs = 0
+	routingConvStartNs = 0
+	routingConvMu.Unlock()
 
 	if globalRuntime != nil {
 		globalRuntime.DestroyAll()
@@ -357,6 +405,50 @@ func NdndSimGetDvUpdateSpanNs(prefixStr *C.char, prefixLen C.int) C.int64_t {
 	}
 
 	return C.int64_t(m.lastReceiveNs - m.firstOriginNs)
+}
+
+//export NdndSimGetRoutingConvergenceNs
+func NdndSimGetRoutingConvergenceNs(totalNodes C.int) C.int64_t {
+	routingConvMu.Lock()
+	defer routingConvMu.Unlock()
+
+	if routingConvStartNs == 0 || int(totalNodes) < 2 {
+		return C.int64_t(-1)
+	}
+
+	n := int(totalNodes)
+
+	// Check that every node has reachable routes to all other n-1 nodes.
+	if len(routingConvReachable) < n {
+		return C.int64_t(-1)
+	}
+	for _, reachSet := range routingConvReachable {
+		if len(reachSet) < n-1 {
+			return C.int64_t(-1)
+		}
+	}
+
+	// Walk all events to find the actual completion timestamp:
+	// the earliest sim time at which ALL nodes had ALL n-1 routes.
+	// Since we only record the global max event time during collection,
+	// we need a more precise calculation.
+	//
+	// For each node, find its (n-1)th reachable event (the timestamp at
+	// which it completed). Convergence = max of per-node completion times
+	// minus the first event across all nodes.
+	//
+	// We don't have per-event timestamps stored granularly — we stored
+	// routingConvTimeNs as the max. This IS the timestamp of the last
+	// event globally, which by definition is >= every per-node completion
+	// time. But it might overcount if the last event was redundant.
+	//
+	// However, the observer only fires on first-time reachability (the
+	// "Router is now reachable" condition is guarded by pfxSubs existence
+	// check), so every event is unique and meaningful. The last event IS
+	// the one that completed some node's set, making it the convergence
+	// moment.
+
+	return C.int64_t(routingConvTimeNs - routingConvStartNs)
 }
 
 //export NdndSimGetAppFaceId

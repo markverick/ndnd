@@ -172,6 +172,12 @@ func (dv *Router) updatePrefixSubs() {
 			log.Info(dv, "Router is now reachable", "name", router.Name())
 			dv.pfxSubs[hash] = router.Name()
 
+			table.NotifyRouterReachable(table.RouterReachableEvent{
+				At:              dv.NowFunc(),
+				NodeRouter:      dv.config.RouterName(),
+				ReachableRouter: router.Name(),
+			})
+
 			dv.pfxSvs.SubscribePublisher(router.Name(), func(sp sync.SvsPub) {
 				dv.mutex.Lock()
 				defer dv.mutex.Unlock()
