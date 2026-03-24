@@ -297,7 +297,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 
 	routerName, routerNameSet := CfgRouterName()
 
-	isLocalHop := packet.Name.At(0).Equal(enc.LOCALHOP)
+	isLocalHop := lookupName.At(0).Equal(enc.LOCALHOP)
 	var pipeline forwardPipeline
 	var petEntry table.PetEntry
 	var petFound bool
@@ -569,12 +569,13 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 		}
 
 		// TODO - this branch feels weird / not needed
-		if petFound {
+		if petFound && len(packet.Bier) == 0 && isLocalHop {
 			for _, er := range petEntry.EgressRouters {
 				if len(er) > 0 && er[0].Equal(enc.LOCALHOP) {
 					core.Log.Trace(t, "Multicast localhop egress via PET",
 						"name", packet.Name,
 						"egress", er,
+						"isLocalHop", isLocalHop,
 					)
 					for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(er) {
 						// Enforce localhop: only forward to local faces when incoming is non-local.
