@@ -132,6 +132,17 @@ func (r *Rib) RemoveNextHop(nextHop enc.Name) bool {
 	return dirty
 }
 
+// Remove a destination entry from the RIB entirely.
+// Returns true if the Advertisement might change.
+func (r *Rib) RemoveDestination(destName enc.Name) bool {
+	destHash := destName.Hash()
+	if _, ok := r.entries[destHash]; ok {
+		delete(r.entries, destHash)
+		return true
+	}
+	return false
+}
+
 // Resets all entries for a given next hop to infinity without
 // refreshing any entry. This is specifically intended for the
 // RIB update algorithm to avoid unnecessary changes.

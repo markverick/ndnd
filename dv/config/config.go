@@ -36,6 +36,16 @@ type Config struct {
 	AdvertisementSyncInterval_ms uint64 `json:"advertise_interval"`
 	// Time after which a neighbor is considered dead.
 	RouterDeadInterval_ms uint64 `json:"router_dead_interval"`
+	// OneStep mode: prefixes go directly into DV advertisements (no PrefixSync).
+	// When false (default), the router uses two-step routing: DV carries only
+	// router reachability, and a separate PrefixSync protocol distributes
+	// prefix-to-router mappings.
+	OneStep bool `json:"one_step"`
+	// Delay before starting PrefixSync SVS (milliseconds).
+	// Useful for large topologies where DV needs time to converge before SVS
+	// starts fetching prefix tables from remote routers.
+	// 0 means start immediately (default).
+	PrefixSyncDelay_ms uint64 `json:"prefix_sync_delay"`
 	// URI specifying KeyChain location.
 	KeyChainUri string `json:"keychain"`
 	// List of trust anchor full names.

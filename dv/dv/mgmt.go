@@ -121,9 +121,24 @@ func (dv *Router) mgmtOnRib(args ndn.InterestHandlerArgs) {
 
 	switch cmd.String() {
 	case "register":
-		dv.pfx.Announce(name, face, cost)
+		if dv.config.OneStep {
+			// One-step mode: put prefix directly into RIB as a destination.
+			// This makes it appear in DV advertisements alongside router
+			// entries, eliminating the need for PrefixSync.
+			if dv.rib.Set(name, dv.config.RouterName(), cost) {
+				dv.GoFunc(dv.postUpdateRib)
+			}
+		} else {
+			dv.pfx.Announce(name, face, cost)
+		}
 	case "unregister":
-		dv.pfx.Withdraw(name, face)
+		if dv.config.OneStep {
+			if dv.rib.RemoveDestination(name) {
+				dv.GoFunc(dv.postUpdateRib)
+			}
+		} else {
+			dv.pfx.Withdraw(name, face)
+		}
 	default:
 		log.Warn(dv, "Unknown readvertise cmd", "cmd", cmd)
 		return

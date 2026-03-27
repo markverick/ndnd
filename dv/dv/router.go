@@ -211,16 +211,20 @@ func (dv *Router) Start() (err error) {
 		return err
 	}
 
-	// Start sync groups
-	dv.pfxSvs.Start()
-	defer dv.pfxSvs.Stop()
+	// Start sync groups (skip PrefixSync SVS in one-step mode)
+	if !dv.config.OneStep {
+		dv.pfxSvs.Start()
+		defer dv.pfxSvs.Stop()
+	}
 
 	// Add self to the RIB and make initial advertisement
 	dv.rib.Set(dv.config.RouterName(), dv.config.RouterName(), 0)
 	dv.advert.generate()
 
-	// Initialize prefix table
-	dv.pfx.Reset()
+	// Initialize prefix table (two-step only)
+	if !dv.config.OneStep {
+		dv.pfx.Reset()
+	}
 
 	for {
 		select {
@@ -265,15 +269,27 @@ func (dv *Router) Init() error {
 		return err
 	}
 
-	// Start sync groups
-	dv.pfxSvs.Start()
+	// Start sync groups (skip PrefixSync SVS in one-step mode)
+	if !dv.config.OneStep {
+		if dv.config.PrefixSyncDelay_ms > 0 {
+			delay := time.Duration(dv.config.PrefixSyncDelay_ms) * time.Millisecond
+			dv.AfterFunc(delay, func() {
+				dv.pfxSvs.Start()
+				dv.pfx.Reset()
+			})
+		} else {
+			dv.pfxSvs.Start()
+		}
+	}
 
 	// Add self to the RIB and make initial advertisement
 	dv.rib.Set(dv.config.RouterName(), dv.config.RouterName(), 0)
 	dv.advert.generate()
 
-	// Initialize prefix table
-	dv.pfx.Reset()
+	// Initialize prefix table (two-step only, immediate start)
+	if !dv.config.OneStep && dv.config.PrefixSyncDelay_ms == 0 {
+		dv.pfx.Reset()
+	}
 
 	return nil
 }
@@ -294,7 +310,9 @@ func (dv *Router) RunDeadcheck() {
 
 // Cleanup tears down the DV router (simulation variant of deferred cleanup in Start).
 func (dv *Router) Cleanup() {
-	dv.pfxSvs.Stop()
+	if !dv.config.OneStep {
+		dv.pfxSvs.Stop()
+	}
 	dv.client.Stop()
 	log.Info(dv, "Cleaned up DV router (sim)")
 }
@@ -353,9 +371,14 @@ func (dv *Router) register() (err error) {
 	pfxs := []enc.Name{
 		dv.config.AdvertisementSyncPrefix(),
 		dv.config.AdvertisementDataPrefix(),
-		dv.pfxSvs.SyncPrefix(),
-		dv.pfxSvs.DataPrefix(),
 		dv.config.MgmtPrefix(),
+	}
+	// In two-step mode, also register PrefixSync SVS routes.
+	if !dv.config.OneStep {
+		pfxs = append(pfxs,
+			dv.pfxSvs.SyncPrefix(),
+			dv.pfxSvs.DataPrefix(),
+		)
 	}
 	for _, prefix := range pfxs {
 		dv.nfdc.Exec(nfdc.NfdMgmtCmd{
@@ -373,7 +396,9 @@ func (dv *Router) register() (err error) {
 	// Set strategy to multicast for sync prefixes
 	pfxs = []enc.Name{
 		dv.config.AdvertisementSyncPrefix(),
-		dv.pfxSvs.SyncPrefix(),
+	}
+	if !dv.config.OneStep {
+		pfxs = append(pfxs, dv.pfxSvs.SyncPrefix())
 	}
 	for _, prefix := range pfxs {
 		dv.nfdc.Exec(nfdc.NfdMgmtCmd{

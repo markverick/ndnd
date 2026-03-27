@@ -124,26 +124,41 @@ func (dv *Router) updateFib() {
 		// Get FIB entry to reach this router
 		fes := dv.rib.GetFibEntries(dv.neighbors, hash)
 
-		// Add entry for the router's prefix sync group prefix
-		proute := dv.config.PrefixTableGroupPrefix().
-			Append(router.Name()...)
-		register(proute, fes, 0)
+		if dv.config.OneStep {
+			// One-step mode: RIB contains both router entries and prefix
+			// entries.  Router entries have names starting with the network
+			// prefix (e.g. /minindn/nodeN); everything else is an
+			// application prefix that should be installed directly in the
+			// FIB without adding PrefixSync or advert-data routes.
+			if dv.config.NetworkName().IsPrefix(router.Name()) {
+				// This is a router entry — install DV advert data route
+				advRoute := enc.LOCALHOP.
+					Append(router.Name()...).
+					Append(enc.NewKeywordComponent("DV")).
+					Append(enc.NewKeywordComponent("ADV"))
+				register(advRoute, fes, 0)
+			} else {
+				// This is a prefix entry — install FIB route directly
+				register(router.Name(), fes, 0)
+			}
+		} else {
+			// Two-step mode (default): all RIB entries are routers.
+			// Add entry for the router's prefix sync group prefix
+			proute := dv.config.PrefixTableGroupPrefix().
+				Append(router.Name()...)
+			register(proute, fes, 0)
 
-		// Add entry for the router's DV advertisement data namespace.
-		// advert_data.dataFetch() consumes names under
-		// /localhop/<router>/DV/ADV/<boot>/<seq> and expects forwarding to
-		// follow the same nexthops as the router itself.
-		advRoute := enc.LOCALHOP.
-			Append(router.Name()...).
-			Append(enc.NewKeywordComponent("DV")).
-			Append(enc.NewKeywordComponent("ADV"))
-		register(advRoute, fes, 0)
+			// Add entry for the router's DV advertisement data namespace.
+			advRoute := enc.LOCALHOP.
+				Append(router.Name()...).
+				Append(enc.NewKeywordComponent("DV")).
+				Append(enc.NewKeywordComponent("ADV"))
+			register(advRoute, fes, 0)
 
-		// Add entries to all prefixes announced by this router
-		for _, prefix := range dv.pfx.GetRouter(router.Name()).Prefixes {
-			// Use the same nexthop entries as the exit router itself
-			// De-duplication is done by the fib table update function
-			register(prefix.Name, fes, prefix.Cost)
+			// Add entries to all prefixes announced by this router
+			for _, prefix := range dv.pfx.GetRouter(router.Name()).Prefixes {
+				register(prefix.Name, fes, prefix.Cost)
+			}
 		}
 	}
 
@@ -168,6 +183,12 @@ func (dv *Router) updatePrefixSubs() {
 			continue
 		}
 
+		// In one-step mode the RIB contains both router and prefix entries.
+		// Only track router entries for reachability / prefix subscriptions.
+		if dv.config.OneStep && !dv.config.NetworkName().IsPrefix(router.Name()) {
+			continue
+		}
+
 		if _, ok := dv.pfxSubs[hash]; !ok {
 			log.Info(dv, "Router is now reachable", "name", router.Name())
 			dv.pfxSubs[hash] = router.Name()
@@ -178,16 +199,19 @@ func (dv *Router) updatePrefixSubs() {
 				ReachableRouter: router.Name(),
 			})
 
-			dv.pfxSvs.SubscribePublisher(router.Name(), func(sp sync.SvsPub) {
-				dv.mutex.Lock()
-				defer dv.mutex.Unlock()
+			// In one-step mode there is no PrefixSync SVS to subscribe to.
+			if !dv.config.OneStep {
+				dv.pfxSvs.SubscribePublisher(router.Name(), func(sp sync.SvsPub) {
+					dv.mutex.Lock()
+					defer dv.mutex.Unlock()
 
-				// Both snapshots and normal data are handled the same way
-				if dirty := dv.pfx.Apply(sp.Content); dirty {
-					// Update the local fib if prefix table changed
-					dv.GoFunc(dv.updateFib) // expensive
-				}
-			})
+					// Both snapshots and normal data are handled the same way
+					if dirty := dv.pfx.Apply(sp.Content); dirty {
+						// Update the local fib if prefix table changed
+						dv.GoFunc(dv.updateFib) // expensive
+					}
+				})
+			}
 		}
 	}
 
@@ -195,7 +219,9 @@ func (dv *Router) updatePrefixSubs() {
 	for hash, name := range dv.pfxSubs {
 		if !dv.rib.Has(name) {
 			log.Info(dv, "Router is now unreachable", "name", name)
-			dv.pfxSvs.UnsubscribePublisher(name)
+			if !dv.config.OneStep {
+				dv.pfxSvs.UnsubscribePublisher(name)
+			}
 			delete(dv.pfxSubs, hash)
 		}
 	}

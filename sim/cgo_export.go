@@ -92,10 +92,12 @@ var (
 
 	// Routing convergence: tracks when each node has reachable routes
 	// to all other nodes. Purely event-driven via RouterReachableEvent.
-	routingConvMu       sync.Mutex
+	routingConvMu        sync.Mutex
 	routingConvReachable map[string]map[string]bool // nodeRouter -> set of reachableRouters
-	routingConvTimeNs   int64                       // sim timestamp when convergence completed (0 = not yet)
-	routingConvStartNs  int64                       // sim timestamp of first RouterReachable event
+	routingConvTimeNs    int64                      // sim timestamp when convergence completed (0 = not yet)
+	routingConvStartNs   int64                      // sim timestamp of first RouterReachable event
+	routingConvTotal     int                        // expected total DV nodes (0 = unknown)
+	routingConvFired     bool                       // true after callback has been fired
 )
 
 type dvSpanMetric struct {
@@ -113,6 +115,7 @@ func NdndSimInit(
 	getTimeNsCb C.NdndSimGetTimeNsFunc,
 	dataProducedCb C.NdndSimDataProducedFunc,
 	dataReceivedCb C.NdndSimDataReceivedFunc,
+	routingConvergedCb C.NdndSimRoutingConvergedFunc,
 ) {
 	C.setSendPacketCb(sendPacketCb)
 	C.setScheduleEventCb(scheduleEventCb)
@@ -120,6 +123,7 @@ func NdndSimInit(
 	C.setGetTimeNsCb(getTimeNsCb)
 	C.setDataProducedCb(dataProducedCb)
 	C.setDataReceivedCb(dataReceivedCb)
+	C.setRoutingConvergedCb(routingConvergedCb)
 
 	// Override NDNd's clock to use ns-3 simulation time
 	core.NowFunc = func() time.Time {
@@ -139,6 +143,8 @@ func NdndSimInit(
 	routingConvReachable = make(map[string]map[string]bool)
 	routingConvTimeNs = 0
 	routingConvStartNs = 0
+	routingConvTotal = 0
+	routingConvFired = false
 	routingConvMu.Unlock()
 
 	dv_table.SetPrefixEventObserver(func(ev dv_table.PrefixEvent) {
@@ -185,10 +191,26 @@ func NdndSimInit(
 		s[reachKey] = true
 
 		// Record the sim time of the last event that could complete convergence.
-		// The actual completeness check happens in NdndSimGetRoutingConvergenceNs
-		// because we don't know totalNodes until then.
 		if ns > routingConvTimeNs {
 			routingConvTimeNs = ns
+		}
+
+		// Check if convergence is now complete and fire callback once.
+		if routingConvTotal > 0 && !routingConvFired {
+			n := routingConvTotal
+			if len(routingConvReachable) >= n {
+				allDone := true
+				for _, rs := range routingConvReachable {
+					if len(rs) < n-1 {
+						allDone = false
+						break
+					}
+				}
+				if allDone {
+					routingConvFired = true
+					C.callRoutingConverged()
+				}
+			}
 		}
 	})
 }
@@ -405,6 +427,13 @@ func NdndSimGetDvUpdateSpanNs(prefixStr *C.char, prefixLen C.int) C.int64_t {
 	}
 
 	return C.int64_t(m.lastReceiveNs - m.firstOriginNs)
+}
+
+//export NdndSimSetTotalNodes
+func NdndSimSetTotalNodes(totalNodes C.int) {
+	routingConvMu.Lock()
+	defer routingConvMu.Unlock()
+	routingConvTotal = int(totalNodes)
 }
 
 //export NdndSimGetRoutingConvergenceNs
