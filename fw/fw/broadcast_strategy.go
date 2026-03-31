@@ -74,8 +74,13 @@ func (s *BroadcastStrategy) AfterReceiveMulticastInterest(
 		core.Log.Trace(s, "Broadcast without PET egress routers; drop", "name", packet.Name)
 		return
 	}
+
 	for _, er := range petEntry.EgressRouters {
 		for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(er) {
+			if nextHop.Nexthop == packet.IncomingFaceID {
+				continue
+			}
+
 			if pitEntry.InRecords()[nextHop.Nexthop] != nil {
 				continue
 			}
