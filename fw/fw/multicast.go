@@ -90,6 +90,20 @@ func (s *Multicast) AfterReceiveInterest(
 	}
 }
 
+func (s *Multicast) AfterReceiveMulticastInterest(
+	packet *defn.Pkt,
+	pitEntry table.PitEntry,
+	inFace uint64,
+	petEntry table.PetEntry,
+) {
+	core.Log.Error(s, "Multicast does not support AfterReceiveMulticastInterest",
+		"name", packet.Name,
+		"inFace", inFace,
+		"petNextHops", len(petEntry.NextHops),
+		"petEgress", len(petEntry.EgressRouters),
+	)
+}
+
 // (AI GENERATED DESCRIPTION): No‑op hook invoked before satisfying an Interest in the Multicast strategy – it performs no action.
 func (s *Multicast) BeforeSatisfyInterest(pitEntry table.PitEntry, inFace uint64) {
 	// This does nothing in Multicast

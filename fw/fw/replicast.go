@@ -102,6 +102,20 @@ func (s *Replicast) AfterReceiveInterest(
 	}
 }
 
+func (s *Replicast) AfterReceiveMulticastInterest(
+	packet *defn.Pkt,
+	pitEntry table.PitEntry,
+	inFace uint64,
+	petEntry table.PetEntry,
+) {
+	core.Log.Error(s, "Replicast does not support AfterReceiveMulticastInterest",
+		"name", packet.Name,
+		"inFace", inFace,
+		"petNextHops", len(petEntry.NextHops),
+		"petEgress", len(petEntry.EgressRouters),
+	)
+}
+
 // (AI GENERATED DESCRIPTION): No‑op hook invoked before satisfying an Interest in the Replicast strategy – it performs no action.
 func (s *Replicast) BeforeSatisfyInterest(pitEntry table.PitEntry, inFace uint64) {
 	// This does nothing in Replicast

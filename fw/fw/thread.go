@@ -545,34 +545,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	// Multicast delivery making use of BIFT -> MulticastStrategyTable -> multicast delivery
 	// Currently just overrides /localhop to a broadcast override and manual BIER code
 	if pipeline.isMulticast() {
-		multicastStrategyName := table.MulticastStrategyTable.FindStrategyEnc(interest.Name())
-		useBier := multicastStrategyName.Equal(defn.BIER_STRATEGY)
-		useBroadcast := multicastStrategyName.Equal(defn.BROADCAST_STRATEGY)
-		if !useBier && !useBroadcast {
-			core.Log.Warn(t, "Unknown multicast strategy, defaulting to broadcast",
-				"name", packet.Name,
-				"strategy", multicastStrategyName,
-			)
-			useBroadcast = true
-		}
-		if useBier && !IsBierEnabled() {
-			core.Log.Warn(t, "BIER strategy selected but BIER is disabled; falling back to broadcast",
-				"name", packet.Name,
-				"strategy", multicastStrategyName,
-			)
-			useBier = false
-			useBroadcast = true
-		}
-		// This scenario can happen but not to worry as it is just a temporary state
-		// if useBier && isLocalHop {
-		// 	core.Log.Debug(t, "BIER strategy selected for localhop; falling back to broadcast",
-		// 		"name", packet.Name,
-		// 		"strategy", multicastStrategyName,
-		// 	)
-		// 	useBier = false
-		// 	useBroadcast = true
-		// }
-
+		multicastStrategyName := table.MulticastStrategyTable.FindStrategyEnc(lookupName)
 		core.Log.Trace(t, "Multicast pipeline",
 			"name", packet.Name,
 			"lookup", lookupName,
@@ -580,71 +553,9 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 			"localHop", isLocalHop,
 			"bier", len(packet.Bier),
 			"mcastStrategy", multicastStrategyName,
-			"useBier", useBier,
-			"useBroadcast", useBroadcast,
 		)
-		// Deliver to local faces if there exist such legal local faces
-		deliverToLocal := len(petLocalHops) > 0
-		if deliverToLocal {
-			core.Log.Trace(t, "Local Egress captures the Interest", "name", packet.Name)
-			// In multicast, we deliver to all local faces unlike in unicast
-			for _, localHop := range petLocalHops {
-				packet.EgressRouter = nil
-				t.processOutgoingInterest(packet, pitEntry, localHop.FaceID, incomingFace.FaceID())
-			}
-			// This branch was only there for this hard-coded version. disregard it
-			// if !IsBierEnabled() {
-			// 	if !isLocalHop {
-			// 		return
-			// 	}
-			// }
-		}
-
-		if useBier {
-			core.Log.Trace(t, "Multicast BIER path",
-				"name", packet.Name,
-				"bier", len(packet.Bier),
-				"egressRouters", len(petEntry.EgressRouters),
-				"strategy", multicastStrategyName,
-			)
-			if len(packet.Bier) == 0 {
-				if pipeline != fwMulticastIngress {
-					core.Log.Trace(t, "Multicast BIER empty, non-ingress UNREACHABLE",
-						"name", packet.Name,
-						"pipeline", pipeline,
-					)
-					return
-				}
-				core.Log.Trace(t, "BFIR: encoding BIER bit-string", "name", packet.Name, "egress-count", len(petEntry.EgressRouters))
-				packet.Bier = Bift.BuildBierBitString(petEntry.EgressRouters)
-			}
-			if deliverToLocal && len(packet.Bier) > 0 && IsBierEnabled() {
-				bs := BierClone(packet.Bier)
-				BierClearBit(bs, CfgBierIndex())
-				packet.Bier = bs
-				if BierIsZero(bs) {
-					return
-				}
-			}
-
-			t.processBierInterest(packet, pitEntry, incomingFace.FaceID())
-			return
-		}
-
-		if !petFound {
-			core.Log.Trace(t, "localhop, petEntry = nil, UNREACHABLE")
-			return
-		}
-		// TODO - why do we need to do a FIB lookup in this case? makes no sense?
-		// Can we just replace this with the actual adjacent faces?
-		for _, er := range petEntry.EgressRouters {
-			for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(er) {
-				if pitEntry.InRecords()[nextHop.Nexthop] != nil {
-					continue
-				}
-				t.processOutgoingInterest(packet, pitEntry, nextHop.Nexthop, incomingFace.FaceID())
-			}
-		}
+		strategy := t.strategies[multicastStrategyName.Hash()]
+		strategy.AfterReceiveMulticastInterest(packet, pitEntry, incomingFace.FaceID(), petEntry)
 		return
 	}
 }
