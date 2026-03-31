@@ -46,7 +46,8 @@ type Strategy interface {
 		packet *defn.Pkt,
 		pitEntry table.PitEntry,
 		inFace uint64,
-		petEntry table.PetEntry)
+		petEntry table.PetEntry,
+		deliveredToLocal bool)
 	BeforeSatisfyInterest(
 		pitEntry table.PitEntry,
 		inFace uint64)

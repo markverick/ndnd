@@ -64,22 +64,12 @@ func (s *BroadcastStrategy) AfterReceiveMulticastInterest(
 	pitEntry table.PitEntry,
 	inFace uint64,
 	petEntry table.PetEntry,
+	deliveredToLocal bool,
 ) {
-	// Deliver to local faces if there exist such legal local faces
-	if len(petEntry.NextHops) > 0 {
-		for i := range petEntry.NextHops {
-			nexthop := petEntry.NextHops[i]
-			if nexthop.FaceID == inFace {
-				continue
-			}
-			if pitEntry.InRecords()[nexthop.FaceID] != nil {
-				continue
-			}
-			packet.EgressRouter = nil
-			s.SendInterest(packet, pitEntry, nexthop.FaceID, inFace)
-		}
-	}
-
+	core.Log.Trace(s, "Broadcast multicast dispatch",
+		"name", packet.Name,
+		"deliveredToLocal", deliveredToLocal,
+	)
 	if len(petEntry.EgressRouters) == 0 {
 		core.Log.Trace(s, "Broadcast without PET egress routers; drop", "name", packet.Name)
 		return

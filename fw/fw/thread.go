@@ -554,8 +554,18 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 			"bier", len(packet.Bier),
 			"mcastStrategy", multicastStrategyName,
 		)
+		deliveredToLocal := false
+		if len(petLocalHops) > 0 {
+			core.Log.Trace(t, "Local Egress captures the Interest", "name", packet.Name)
+			// In multicast, we deliver to all local faces unlike in unicast
+			for _, localHop := range petLocalHops {
+				packet.EgressRouter = nil
+				t.processOutgoingInterest(packet, pitEntry, localHop.FaceID, incomingFace.FaceID())
+				deliveredToLocal = true
+			}
+		}
 		strategy := t.strategies[multicastStrategyName.Hash()]
-		strategy.AfterReceiveMulticastInterest(packet, pitEntry, incomingFace.FaceID(), petEntry)
+		strategy.AfterReceiveMulticastInterest(packet, pitEntry, incomingFace.FaceID(), petEntry, deliveredToLocal)
 		return
 	}
 }

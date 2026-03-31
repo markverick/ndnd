@@ -86,24 +86,8 @@ func (s *BierStrategy) AfterReceiveMulticastInterest(
 	pitEntry table.PitEntry,
 	inFace uint64,
 	petEntry table.PetEntry,
+	deliveredToLocal bool,
 ) {
-	// Deliver to local faces if there exist such legal local faces
-	deliverToLocal := false
-	if len(petEntry.NextHops) > 0 {
-		for i := range petEntry.NextHops {
-			nexthop := petEntry.NextHops[i]
-			if nexthop.FaceID == inFace {
-				continue
-			}
-			if pitEntry.InRecords()[nexthop.FaceID] != nil {
-				continue
-			}
-			deliverToLocal = true
-			packet.EgressRouter = nil
-			s.SendInterest(packet, pitEntry, nexthop.FaceID, inFace)
-		}
-	}
-
 	if len(packet.Bier) == 0 {
 		if len(petEntry.EgressRouters) == 0 {
 			core.Log.Trace(s, "Multicast BIER empty without PET egress; drop", "name", packet.Name)
@@ -113,7 +97,7 @@ func (s *BierStrategy) AfterReceiveMulticastInterest(
 		packet.Bier = Bift.BuildBierBitString(petEntry.EgressRouters)
 	}
 
-	if deliverToLocal && len(packet.Bier) > 0 && IsBierEnabled() {
+	if deliveredToLocal && len(packet.Bier) > 0 && IsBierEnabled() {
 		bs := BierClone(packet.Bier)
 		BierClearBit(bs, CfgBierIndex())
 		packet.Bier = bs

@@ -107,12 +107,14 @@ func (s *Replicast) AfterReceiveMulticastInterest(
 	pitEntry table.PitEntry,
 	inFace uint64,
 	petEntry table.PetEntry,
+	deliveredToLocal bool,
 ) {
 	core.Log.Error(s, "Replicast does not support AfterReceiveMulticastInterest",
 		"name", packet.Name,
 		"inFace", inFace,
 		"petNextHops", len(petEntry.NextHops),
 		"petEgress", len(petEntry.EgressRouters),
+		"deliveredToLocal", deliveredToLocal,
 	)
 }
 
