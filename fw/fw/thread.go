@@ -478,13 +478,6 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 					})
 				}
 			}
-		} else {
-			// Fall back to FIB lookup on the Interest name (or forwarding hint)
-			for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(lookupName) {
-				nextNet = append(nextNet, StrategyCandidateHop{
-					HopEntry: nextHop,
-				})
-			}
 		}
 
 		if len(nextNet) == 0 {
