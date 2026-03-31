@@ -569,7 +569,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 		}
 
 		// TODO - this branch feels weird / not needed
-		if petFound && len(packet.Bier) == 0 && isLocalHop {
+		if petFound {
 			for _, er := range petEntry.EgressRouters {
 				if len(er) > 0 && er[0].Equal(enc.LOCALHOP) {
 					core.Log.Trace(t, "Multicast localhop egress via PET",
