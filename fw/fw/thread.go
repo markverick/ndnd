@@ -545,12 +545,43 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	// Multicast delivery making use of BIFT -> MulticastStrategyTable -> multicast delivery
 	// Currently just overrides /localhop to a broadcast override and manual BIER code
 	if pipeline.isMulticast() {
+		multicastStrategyName := table.MulticastStrategyTable.FindStrategyEnc(interest.Name())
+		useBier := multicastStrategyName.Equal(defn.BIER_STRATEGY)
+		useBroadcast := multicastStrategyName.Equal(defn.BROADCAST_STRATEGY)
+		if !useBier && !useBroadcast {
+			core.Log.Warn(t, "Unknown multicast strategy, defaulting to broadcast",
+				"name", packet.Name,
+				"strategy", multicastStrategyName,
+			)
+			useBroadcast = true
+		}
+		if useBier && !IsBierEnabled() {
+			core.Log.Warn(t, "BIER strategy selected but BIER is disabled; falling back to broadcast",
+				"name", packet.Name,
+				"strategy", multicastStrategyName,
+			)
+			useBier = false
+			useBroadcast = true
+		}
+		// This scenario can happen but not to worry as it is just a temporary state
+		// if useBier && isLocalHop {
+		// 	core.Log.Debug(t, "BIER strategy selected for localhop; falling back to broadcast",
+		// 		"name", packet.Name,
+		// 		"strategy", multicastStrategyName,
+		// 	)
+		// 	useBier = false
+		// 	useBroadcast = true
+		// }
+
 		core.Log.Trace(t, "Multicast pipeline",
 			"name", packet.Name,
 			"lookup", lookupName,
 			"petFound", petFound,
 			"localHop", isLocalHop,
 			"bier", len(packet.Bier),
+			"mcastStrategy", multicastStrategyName,
+			"useBier", useBier,
+			"useBroadcast", useBroadcast,
 		)
 		// Deliver to local faces if there exist such legal local faces
 		deliverToLocal := len(petLocalHops) > 0
@@ -561,7 +592,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 				packet.EgressRouter = nil
 				t.processOutgoingInterest(packet, pitEntry, localHop.FaceID, incomingFace.FaceID())
 			}
-      // This branch was only there for this hard-coded version. disregard it
+			// This branch was only there for this hard-coded version. disregard it
 			// if !IsBierEnabled() {
 			// 	if !isLocalHop {
 			// 		return
@@ -569,44 +600,12 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 			// }
 		}
 
-		// TODO - this branch feels weird / not needed
-		// this branch is only currently needed for all the routes with
-		// egress of /localhop/neighbors to broadcast to them
-		if petFound {
-			for _, er := range petEntry.EgressRouters {
-				if len(er) > 0 && er[0].Equal(enc.LOCALHOP) {
-					core.Log.Trace(t, "Multicast localhop egress via PET",
-						"name", packet.Name,
-						"egress", er,
-						"isLocalHop", isLocalHop,
-					)
-					for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(er) {
-						// Enforce localhop: only forward to local faces when incoming is non-local.
-						if localFacesOnly {
-							if face := dispatch.GetFace(nextHop.Nexthop); face != nil && face.Scope() != defn.Local {
-								continue
-							}
-						}
-						// Exclude incoming face
-						if nextHop.Nexthop == packet.IncomingFaceID {
-							continue
-						}
-						// Exclude faces that have an in-record for this interest
-						if pitEntry.InRecords()[nextHop.Nexthop] != nil {
-							continue
-						}
-						t.processOutgoingInterest(packet, pitEntry, nextHop.Nexthop, incomingFace.FaceID())
-					}
-					return
-				}
-			}
-		}
-
-		if IsBierEnabled() && !isLocalHop {
+		if useBier {
 			core.Log.Trace(t, "Multicast BIER path",
 				"name", packet.Name,
 				"bier", len(packet.Bier),
 				"egressRouters", len(petEntry.EgressRouters),
+				"strategy", multicastStrategyName,
 			)
 			if len(packet.Bier) == 0 {
 				if pipeline != fwMulticastIngress {
@@ -640,6 +639,9 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 		// Can we just replace this with the actual adjacent faces?
 		for _, er := range petEntry.EgressRouters {
 			for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(er) {
+				if pitEntry.InRecords()[nextHop.Nexthop] != nil {
+					continue
+				}
 				t.processOutgoingInterest(packet, pitEntry, nextHop.Nexthop, incomingFace.FaceID())
 			}
 		}

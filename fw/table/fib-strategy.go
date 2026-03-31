@@ -50,6 +50,10 @@ type FibStrategy interface {
 // FibStrategy is a table containing FIB and Strategy entries for given prefixes.
 var FibStrategyTable FibStrategy
 
+// MulticastStrategyTable is a table containing multicast strategy entries for given prefixes.
+// It uses the same API as FibStrategyTable but only stores multicast strategies.
+var MulticastStrategyTable FibStrategy
+
 // Name returns the name associated with the baseFibStrategyEntry.
 func (e *baseFibStrategyEntry) Name() enc.Name {
 	return e.name

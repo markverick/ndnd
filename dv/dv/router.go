@@ -8,6 +8,7 @@ import (
 	"github.com/named-data/ndnd/dv/config"
 	"github.com/named-data/ndnd/dv/nfdc"
 	"github.com/named-data/ndnd/dv/table"
+	"github.com/named-data/ndnd/fw/defn"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/log"
 	"github.com/named-data/ndnd/std/ndn"
@@ -303,6 +304,18 @@ func (dv *Router) register() (err error) {
 		Egress: &mgmt.EgressRecord{Name: neighborsPrefix.Clone()},
 		Flags:  optional.Some(uint64(1)),
 	}, -1)
+
+	// Force multicast strategy for sync prefixes to broadcast.
+	broadcastPrefixes := []enc.Name{
+		dv.pfx.SyncPrefix(),
+		dv.config.AdvertisementSyncPrefix(),
+	}
+	for _, prefix := range broadcastPrefixes {
+		dv.execMgmtRetry("multicast-strategy-choice", "set", &mgmt.ControlArgs{
+			Name:     prefix,
+			Strategy: &mgmt.Strategy{Name: defn.BROADCAST_STRATEGY},
+		}, -1)
+	}
 
 	return nil
 }
