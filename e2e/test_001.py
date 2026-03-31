@@ -42,7 +42,7 @@ def scenario(ndn: Minindn, network='/minindn'):
 
     # New pipeline requires PET propagation before Interests can be forwarded.
     expected = {node: set(put_prefixes) for node in ndn.net.hosts}
-    dv_util.wait_prefix_pet_ready(expected)
+    dv_util.wait_prefix_pet_ready(expected, deadline=180)
 
     # Prefix traffic should remain PET-driven; app prefixes must not be injected into FIB.
     for node in ndn.net.hosts:

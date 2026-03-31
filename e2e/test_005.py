@@ -57,7 +57,7 @@ def scenario(ndn: Minindn, network='/minindn'):
 
     # Wait for prefix to appear in PET on every node (confirms BIER egress table is ready)
     expected = {node: {prefix} for node in hosts}
-    dv_util.wait_prefix_pet_ready(expected)
+    dv_util.wait_prefix_pet_ready(expected, deadline=180)
 
     info('--- Fetching data via BIER multicast on all consumers ---\n')
     failures = []
