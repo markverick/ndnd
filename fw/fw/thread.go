@@ -333,11 +333,6 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 		"bier", len(packet.Bier) > 0,
 	)
 
-	// Get strategy for name. This may not be the final strategy,
-	// we need to get a prelim strategy for CS though for AfterContentStoreHit
-	strategyName := table.FibStrategyTable.FindStrategyEnc(interest.Name())
-	strategy := t.strategies[strategyName.Hash()]
-
 	// Add in-record and determine if already pending
 	// this looks like custom interest again, but again can be changed without much issue?
 	inRecord, isAlreadyPending, prevNonce := pitEntry.InsertInRecord(
@@ -374,17 +369,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 				packet.L3.Interest = nil
 				packet.Raw = enc.Wire{csWire}
 				packet.Name = csData.NameV
-				strategy.AfterContentStoreHit(packet, pitEntry, incomingFace.FaceID())
-				// TODO - below is equivalent to above AfterContentStoreHit call. replace above with below to not require having a strategy locked in at this stage.
-				// core.Log.Trace(t, "AfterContentStoreHit", "name", packet.Name, "faceid", incomingFace.FaceID())
-
-				// nexthop := incomingFace.FaceID()
-				// var pitToken []byte
-				// if inRecord, ok := pitEntry.InRecords()[nexthop]; ok {
-				// 	pitToken = inRecord.PitToken
-				// 	pitEntry.RemoveInRecord(nexthop)
-				// }
-				// t.processOutgoingData(packet, nexthop, pitToken, 0)
+				t.afterContentStoreHit(packet, pitEntry, incomingFace.FaceID())
 				return
 			} else if err != nil {
 				core.Log.Error(t, "Error copying CS entry", "err", err)
@@ -485,7 +470,6 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 				"name", packet.Name,
 				"lookup", lookupName,
 				"pipeline", pipeline,
-				"strategy", strategyName,
 				"isLocalHop", isLocalHop,
 			)
 		}
@@ -563,14 +547,20 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	}
 }
 
-// processBierInterest is the multicast forwarding pipeline for BIER Interests.
-// It is called directly by processInterest (pipeline-level dispatch) rather than
-// delegating to a forwarding strategy. This reflects the conceptual distinction
-// between unicast and multicast delivery models.
-func (t *Thread) processBierInterest(packet *defn.Pkt, pitEntry table.PitEntry, inFace uint64) {
-	bierReplicate(t, packet, pitEntry, inFace, func(pkt *defn.Pkt, pit table.PitEntry, nexthop, in uint64) bool {
-		return t.processOutgoingInterest(pkt, pit, nexthop, in)
-	})
+func (t *Thread) afterContentStoreHit(
+	packet *defn.Pkt,
+	pitEntry table.PitEntry,
+	inFace uint64,
+) {
+	core.Log.Trace(t, "AfterContentStoreHit", "name", packet.Name, "faceid", inFace)
+
+	nexthop := inFace
+	var pitToken []byte
+	if inRecord, ok := pitEntry.InRecords()[nexthop]; ok {
+		pitToken = inRecord.PitToken
+		pitEntry.RemoveInRecord(nexthop)
+	}
+	t.processOutgoingData(packet, nexthop, pitToken, 0)
 }
 
 func (t *Thread) processOutgoingInterest(
