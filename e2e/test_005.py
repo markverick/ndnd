@@ -41,7 +41,7 @@ def scenario(ndn: Minindn, network='/minindn'):
         AppManager(ndn, [host], NDNd_FW, network=network, bier_index=bier_map[host])
 
     dv_util.setup(ndn, network=network)
-    dv_util.converge(ndn.net.hosts, network=network, deadline=20)
+    dv_util.converge(ndn.net.hosts, network=network)
     dv_util.populate_bift(hosts, bier_map, network=network)
 
     producer = sorted(hosts, key=lambda h: h.name)[0]
@@ -57,7 +57,7 @@ def scenario(ndn: Minindn, network='/minindn'):
 
     # Wait for prefix to appear in PET on every node (confirms BIER egress table is ready)
     expected = {node: {prefix} for node in hosts}
-    dv_util.wait_prefix_pet_ready(expected, deadline=20)
+    dv_util.wait_prefix_pet_ready(expected)
 
     info('--- Fetching data via BIER multicast on all consumers ---\n')
     failures = []

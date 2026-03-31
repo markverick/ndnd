@@ -59,8 +59,6 @@ def is_converged(nodes: list[Node], network=DEFAULT_NETWORK, use_nfdc=False) -> 
                 continue
             if f'{network}/{other.name}' not in routes:
                 info(f'Routing not converged on {node.name} for {other.name}\n')
-                preview = "\n".join(routes.splitlines()[:40])
-                info(f'route-list({node.name}) first 40 lines:\n{preview}\n')
                 converged = False
                 break # break out of inner loop
         if not converged:
