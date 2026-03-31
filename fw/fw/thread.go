@@ -561,14 +561,17 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 				packet.EgressRouter = nil
 				t.processOutgoingInterest(packet, pitEntry, localHop.FaceID, incomingFace.FaceID())
 			}
-			if !IsBierEnabled() {
-				if !isLocalHop {
-					return
-				}
-			}
+      // This branch was only there for this hard-coded version. disregard it
+			// if !IsBierEnabled() {
+			// 	if !isLocalHop {
+			// 		return
+			// 	}
+			// }
 		}
 
 		// TODO - this branch feels weird / not needed
+		// this branch is only currently needed for all the routes with
+		// egress of /localhop/neighbors to broadcast to them
 		if petFound {
 			for _, er := range petEntry.EgressRouters {
 				if len(er) > 0 && er[0].Equal(enc.LOCALHOP) {
