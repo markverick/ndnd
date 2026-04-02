@@ -1,6 +1,9 @@
 package sync
 
-import enc "github.com/named-data/ndnd/std/encoding"
+import (
+	enc "github.com/named-data/ndnd/std/encoding"
+	"time"
+)
 
 type Snapshot interface {
 	// Snapshot returns the Snapshot trait.
@@ -30,6 +33,9 @@ type snapPsState struct {
 	groupPrefix enc.Name
 	// bootTime is the boot time of the node.
 	bootTime uint64
+	// afterFunc schedules f after delay d. Returns a cancel function.
+	// This MUST use the simulation clock in sim mode, not time.AfterFunc.
+	afterFunc func(time.Duration, func()) func()
 
 	// onSnap is the callback for snapshot received from a remote party.
 	// The snapshot strategy should call the inner function when

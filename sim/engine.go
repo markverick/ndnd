@@ -10,6 +10,7 @@ import (
 	"github.com/named-data/ndnd/fw/defn"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/ndn"
+	"github.com/named-data/ndnd/std/log"
 	mgmt "github.com/named-data/ndnd/std/ndn/mgmt_2022"
 	spec "github.com/named-data/ndnd/std/ndn/spec_2022"
 	"github.com/named-data/ndnd/std/types/optional"
@@ -24,7 +25,7 @@ import (
 //
 // When the forwarder delivers a packet to the application face, SimFace.Receive()
 // calls SimEngine.onPacket() directly, which parses, dispatches to the handler,
-// and the handler's Reply callback sends Data back — all synchronously, all on
+// and the handler's Reply callback sends Data back -- all synchronously, all on
 // the ns-3 main thread.
 type SimEngine struct {
 	face    ndn.Face
@@ -43,11 +44,11 @@ type SimEngine struct {
 	// Called when Data is received at this engine (consumer side)
 	onDataReceived func(nodeID uint32, dataSize uint32, dataName string)
 
-	// Interest handler FIB (prefix → handler)
+		// Interest handler FIB (prefix -> handler)
 	fib     *nameTrie[ndn.InterestHandler]
 	fibLock sync.Mutex
 
-	// Pending Interest Table for Express() — maps PIT token to callback
+		// Pending Interest Table for Express() -- maps PIT token to callback
 	pit     map[uint64]*pendingInterest
 	pitLock sync.Mutex
 	pitSeq  uint64
@@ -104,7 +105,7 @@ func (e *SimEngine) Start() error {
 		return fmt.Errorf("face is already running")
 	}
 
-	// Register synchronous packet handler — no goroutine, no channel.
+	// Register synchronous packet handler -- no goroutine, no channel.
 	e.face.OnPacket(func(frame []byte) {
 		e.onPacket(frame)
 	})
@@ -271,11 +272,12 @@ func (e *SimEngine) ExecMgmtCmd(module string, cmd string, args any) (any, error
 			faceID := ca.FaceId.GetOr(0)
 			cost := ca.Cost.GetOr(0)
 			origin := ca.Origin.GetOr(0)
+			flags := ca.Flags.GetOr(uint64(mgmt.RouteFlagChildInherit))
 			if faceID == 0 {
-				// Default to app face — the DV registers prefixes for itself
+					// Default to app face -- the DV registers prefixes for itself
 				faceID = e.appFaceID
 			}
-			e.forwarder.AddRouteWithOrigin(ca.Name, faceID, cost, origin)
+			e.forwarder.AddRouteWithFlags(ca.Name, faceID, cost, origin, flags)
 			return &mgmt.ControlResponse{Val: &mgmt.ControlResponseVal{
 				StatusCode: 200,
 				Params:     &mgmt.ControlArgs{Name: ca.Name, FaceId: optional.Some(faceID)},
@@ -303,7 +305,7 @@ func (e *SimEngine) ExecMgmtCmd(module string, cmd string, args any) (any, error
 				Params:     &mgmt.ControlArgs{FaceId: optional.Some(e.appFaceID)},
 			}}, nil
 		case "destroy":
-			// No-op — ns-3 manages face lifecycle
+				// No-op -- ns-3 manages face lifecycle
 			return &mgmt.ControlResponse{Val: &mgmt.ControlResponseVal{StatusCode: 200}}, nil
 		}
 	case "strategy-choice":
@@ -330,7 +332,7 @@ func (e *SimEngine) ExecMgmtCmd(module string, cmd string, args any) (any, error
 func (e *SimEngine) SetCmdSec(signer ndn.Signer, validator func(enc.Name, enc.Wire, ndn.Signature) bool) {
 }
 
-// RegisterRoute is a no-op — FIB routes are managed by C++ via NdndSimAddRoute.
+// RegisterRoute is a no-op -- FIB routes are managed by C++ via NdndSimAddRoute.
 func (e *SimEngine) RegisterRoute(prefix enc.Name) error {
 	return nil
 }
@@ -455,7 +457,7 @@ func (e *SimEngine) makeReplyFunc(pitToken []byte) ndn.WireReplyFunc {
 
 // onData matches incoming Data against pending Interests from Express().
 func (e *SimEngine) onData(data ndn.Data, raw enc.Wire, sigCovered enc.Wire, pitToken []byte) {
-	// Match by PIT token (preferred — reliable)
+	// Match by PIT token (preferred -- reliable)
 	if len(pitToken) == 8 {
 		token := binary.BigEndian.Uint64(pitToken)
 		e.pitLock.Lock()
@@ -478,7 +480,10 @@ func (e *SimEngine) onData(data ndn.Data, raw enc.Wire, sigCovered enc.Wire, pit
 		}
 	}
 
-	// Fall back to name-based matching (scan all pending Interests)
+	// Fall back to name-based matching (scan all pending Interests).
+	// This path should rarely trigger -- log a warning so we can confirm.
+	log.Warn(nil, "Data matched by name fallback (no PIT token match)",
+		"name", data.Name().String())
 	dataName := data.Name()
 	e.pitLock.Lock()
 	var matchToken uint64

@@ -10,6 +10,7 @@ import (
 	"github.com/named-data/ndnd/fw/fw"
 	"github.com/named-data/ndnd/fw/table"
 	enc "github.com/named-data/ndnd/std/encoding"
+	spec_mgmt "github.com/named-data/ndnd/std/ndn/mgmt_2022"
 )
 
 // globalFaceID is a process-wide atomic counter ensuring face IDs are unique
@@ -33,16 +34,12 @@ type SimForwarder struct {
 	// Per-node RIB (routes go through here so readvertise fires)
 	rib *table.RibTable
 
-	// Per-node face table (face ID → DispatchFace)
+	// Per-node face table (face ID -> DispatchFace)
 	faces  map[uint64]*DispatchFace
 	faceMu sync.Mutex
 
 	// Scheduled maintenance event
 	maintEvent EventID
-
-	// Counters
-	nPktsIn  atomic.Uint64
-	nPktsOut atomic.Uint64
 }
 
 // NewSimForwarder creates a new simulation forwarder backed by a real fw.Thread.
@@ -57,7 +54,7 @@ func NewSimForwarder(clock Clock) *SimForwarder {
 		rib:   rib,
 	}
 
-	// Create a real forwarding thread (ID 0 — single-threaded in sim)
+	// Create a real forwarding thread (ID 0 -- single-threaded in sim)
 	fwd.thread = fw.NewThread(0)
 
 	// Give this node its own FIB (not the global shared one)
@@ -124,7 +121,7 @@ func (fwd *SimForwarder) GetFace(id uint64) *DispatchFace {
 
 // withNodeFib temporarily swaps the global FibStrategyTable to this node's
 // FIB for the duration of f(). The simulation is single-threaded so this
-// is safe — it ensures RIB's updateNexthopsEnc writes to the correct FIB.
+// is safe -- it ensures RIB's updateNexthopsEnc writes to the correct FIB.
 func (fwd *SimForwarder) withNodeFib(f func()) {
 	old := table.FibStrategyTable
 	table.FibStrategyTable = fwd.thread.Fib()
@@ -138,12 +135,19 @@ func (fwd *SimForwarder) AddRoute(name enc.Name, faceID uint64, cost uint64) {
 }
 
 // AddRouteWithOrigin adds a route with a specific origin value.
+// Uses ChildInherit by default, matching production ndnd behavior.
 func (fwd *SimForwarder) AddRouteWithOrigin(name enc.Name, faceID uint64, cost uint64, origin uint64) {
+	fwd.AddRouteWithFlags(name, faceID, cost, origin, uint64(spec_mgmt.RouteFlagChildInherit))
+}
+
+// AddRouteWithFlags adds a route with explicit flags.
+func (fwd *SimForwarder) AddRouteWithFlags(name enc.Name, faceID uint64, cost uint64, origin uint64, flags uint64) {
 	fwd.withNodeFib(func() {
 		fwd.rib.AddEncRoute(name, &table.Route{
 			FaceID: faceID,
 			Cost:   cost,
 			Origin: origin,
+			Flags:  flags,
 		})
 	})
 }
@@ -220,8 +224,6 @@ func (fwd *SimForwarder) ReceivePacket(faceID uint64, frame []byte) {
 	} else if pkt.L3.Data != nil {
 		pkt.Name = pkt.L3.Data.NameV
 	}
-
-	fwd.nPktsIn.Add(1)
 
 	// Synchronously process through the real forwarding pipeline
 	fwd.thread.ProcessPacket(pkt)

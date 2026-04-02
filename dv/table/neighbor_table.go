@@ -111,6 +111,11 @@ func (ns *NeighborState) IsDead() bool {
 	return core.Now().Sub(ns.lastSeen) > ns.nt.config.RouterDeadInterval()
 }
 
+// LastSeen returns the last seen time for the neighbor.
+func (ns *NeighborState) LastSeen() time.Time {
+	return ns.lastSeen
+}
+
 // Call this when a ping is received from a face.
 // This will automatically register the face route with the neighbor
 // and update the last seen time for the neighbor.

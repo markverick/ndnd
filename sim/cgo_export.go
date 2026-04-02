@@ -22,12 +22,17 @@ import "C"
 
 // --- NS-3 Clock Implementation ---
 
+// globalNextEvID is a process-wide atomic counter so that every Ns3Clock
+// produces unique event IDs.  The C++ side stores them in a global
+// unordered_map keyed by event ID, so collisions between different nodes
+// would cause one node's Cancel to silently remove another node's event.
+var globalNextEvID atomic.Uint64
+
 // Ns3Clock implements the Clock interface using ns-3's simulation time.
 type Ns3Clock struct {
-	nodeID   uint32
-	nextEvID atomic.Uint64
-	mu       sync.Mutex
-	events   map[EventID]func()
+	nodeID uint32
+	mu     sync.Mutex
+	events map[EventID]func()
 }
 
 // NewNs3Clock creates a clock for a specific node.
@@ -44,7 +49,7 @@ func (c *Ns3Clock) Now() time.Time {
 }
 
 func (c *Ns3Clock) Schedule(delay time.Duration, callback func()) EventID {
-	id := EventID(c.nextEvID.Add(1))
+	id := EventID(globalNextEvID.Add(1))
 
 	c.mu.Lock()
 	c.events[id] = callback
@@ -269,7 +274,7 @@ func NdndSimAddFace(nodeId C.uint32_t, ifIndex C.uint32_t) C.uint64_t {
 	nid := uint32(nodeId)
 	iidx := uint32(ifIndex)
 	faceID := node.AddNetworkFace(iidx, func(faceID uint64, frame []byte) {
-		// NDNd → ns-3: send packet through callback
+		// NDNd -> ns-3: send packet through callback
 		C.callSendPacket(
 			C.uint32_t(nid),
 			C.uint32_t(iidx),
@@ -466,7 +471,7 @@ func NdndSimGetRoutingConvergenceNs(totalNodes C.int) C.int64_t {
 	// which it completed). Convergence = max of per-node completion times
 	// minus the first event across all nodes.
 	//
-	// We don't have per-event timestamps stored granularly — we stored
+	// We don't have per-event timestamps stored granularly -- we stored
 	// routingConvTimeNs as the max. This IS the timestamp of the last
 	// event globally, which by definition is >= every per-node completion
 	// time. But it might overcount if the last event was redundant.
@@ -557,7 +562,7 @@ func NdndSimGetRibEntryCount(nodeId C.uint32_t, prefixStr *C.char, prefixLen C.i
 
 	entries := node.Forwarder.rib.GetAllEntries()
 
-	// No prefix filter — count all entries
+	// No prefix filter -- count all entries
 	if prefixStr == nil || int(prefixLen) == 0 {
 		return C.int(len(entries))
 	}

@@ -21,6 +21,14 @@ type SimTrust struct {
 	rootSigner ndn.Signer
 	rootCert   []byte // wire-encoded certificate
 	rootName   string // full certificate name as string (for TrustAnchors)
+
+	// Cached node credentials for cert pre-population.
+	// In real NDN deployments certificates are distributed out-of-band;
+	// pre-populating them in simulation avoids timing-dependent cert
+	// fetch failures that cause non-deterministic DV convergence.
+	mu        sync.Mutex
+	nodeCerts map[string][]byte      // router name → wire-encoded certificate
+	nodeKeys  map[string]ndn.Signer  // router name → Ed25519 signer
 }
 
 var (
@@ -81,43 +89,108 @@ func newSimTrust(network string) (*SimTrust, error) {
 		rootSigner: rootSigner,
 		rootCert:   rootCertBytes,
 		rootName:   rootCertData.Name().String(),
+		nodeCerts:  make(map[string][]byte),
+		nodeKeys:   make(map[string]ndn.Signer),
 	}, nil
 }
 
+// PreGenerateCerts generates and caches Ed25519 keys and certificates for
+// the given routers. Subsequent calls to NodeKeychain for these routers
+// will reuse the cached credentials and include all peer certificates,
+// eliminating the need for network certificate fetches.
+func (st *SimTrust) PreGenerateCerts(routers []string) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	for _, router := range routers {
+		if _, ok := st.nodeCerts[router]; ok {
+			continue // already generated
+		}
+
+		routerName, err := enc.NameFromStr(router)
+		if err != nil {
+			return fmt.Errorf("invalid router name %q: %w", router, err)
+		}
+
+		nodeIdentity := routerName.Append(enc.NewKeywordComponent("DV"))
+		nodeKeyName := sec.MakeKeyName(nodeIdentity)
+		nodeSigner, err := sig.KeygenEd25519(nodeKeyName)
+		if err != nil {
+			return fmt.Errorf("keygen for %s: %w", router, err)
+		}
+
+		nodeKeyData, err := sig.MarshalSecretToData(nodeSigner)
+		if err != nil {
+			return fmt.Errorf("marshal key for %s: %w", router, err)
+		}
+
+		now := time.Now()
+		nodeCertWire, err := sec.SignCert(sec.SignCertArgs{
+			Signer:    st.rootSigner,
+			Data:      nodeKeyData,
+			IssuerId:  enc.NewGenericComponent("NA"),
+			NotBefore: now.Add(-time.Hour),
+			NotAfter:  now.Add(10 * 365 * 24 * time.Hour),
+		})
+		if err != nil {
+			return fmt.Errorf("sign cert for %s: %w", router, err)
+		}
+
+		st.nodeKeys[router] = nodeSigner
+		st.nodeCerts[router] = nodeCertWire.Join()
+	}
+	return nil
+}
+
 // NodeKeychain builds a per-node keychain with an Ed25519 key signed by the root.
+// If PreGenerateCerts was called, the cached key is reused and all peer
+// certificates are included in the keychain (eliminating network cert fetches).
 // Returns (keychain, store, trustAnchorNames) ready for config injection.
 func (st *SimTrust) NodeKeychain(router string) (ndn.KeyChain, ndn.Store, []string, error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
 	routerName, err := enc.NameFromStr(router)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("invalid router name: %w", err)
 	}
 
-	// Node identity: /network/node/32=DV (matches trust schema: #router/"32=DV"/#KEY)
-	nodeIdentity := routerName.Append(enc.NewKeywordComponent("DV"))
-	nodeKeyName := sec.MakeKeyName(nodeIdentity)
+	var nodeSigner ndn.Signer
+	var nodeCertBytes []byte
 
-	nodeSigner, err := sig.KeygenEd25519(nodeKeyName)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to generate node key: %w", err)
-	}
+	if signer, ok := st.nodeKeys[router]; ok {
+		// Use pre-generated credentials
+		nodeSigner = signer
+		nodeCertBytes = st.nodeCerts[router]
+	} else {
+		// Generate on-the-fly when PreGenerateCerts was not called.
+		nodeIdentity := routerName.Append(enc.NewKeywordComponent("DV"))
+		nodeKeyName := sec.MakeKeyName(nodeIdentity)
+		nodeSigner, err = sig.KeygenEd25519(nodeKeyName)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to generate node key: %w", err)
+		}
 
-	// Get the node's public key as a Data packet (for SignCert)
-	nodeKeyData, err := sig.MarshalSecretToData(nodeSigner)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to marshal node key: %w", err)
-	}
+		nodeKeyData, err := sig.MarshalSecretToData(nodeSigner)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to marshal node key: %w", err)
+		}
 
-	// Sign node cert with root key
-	now := time.Now()
-	nodeCertWire, err := sec.SignCert(sec.SignCertArgs{
-		Signer:    st.rootSigner,
-		Data:      nodeKeyData,
-		IssuerId:  enc.NewGenericComponent("NA"),
-		NotBefore: now.Add(-time.Hour),
-		NotAfter:  now.Add(10 * 365 * 24 * time.Hour),
-	})
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to sign node cert: %w", err)
+		now := time.Now()
+		nodeCertWire, err := sec.SignCert(sec.SignCertArgs{
+			Signer:    st.rootSigner,
+			Data:      nodeKeyData,
+			IssuerId:  enc.NewGenericComponent("NA"),
+			NotBefore: now.Add(-time.Hour),
+			NotAfter:  now.Add(10 * 365 * 24 * time.Hour),
+		})
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to sign node cert: %w", err)
+		}
+
+		nodeCertBytes = nodeCertWire.Join()
+		st.nodeKeys[router] = nodeSigner
+		st.nodeCerts[router] = nodeCertBytes
 	}
 
 	// Build keychain
@@ -133,8 +206,20 @@ func (st *SimTrust) NodeKeychain(router string) (ndn.KeyChain, ndn.Store, []stri
 	if err := kc.InsertKey(nodeSigner); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to insert node key: %w", err)
 	}
-	if err := kc.InsertCert(nodeCertWire.Join()); err != nil {
+	if err := kc.InsertCert(nodeCertBytes); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to insert node cert: %w", err)
+	}
+
+	// Insert all peer certificates (pre-populated trust).
+	// This mirrors real NDN deployments where certificates are distributed
+	// out-of-band, avoiding timing-dependent network cert fetch failures.
+	for peerRouter, peerCert := range st.nodeCerts {
+		if peerRouter == router {
+			continue
+		}
+		if err := kc.InsertCert(peerCert); err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to insert peer cert for %s: %w", peerRouter, err)
+		}
 	}
 
 	return kc, store, []string{st.rootName}, nil

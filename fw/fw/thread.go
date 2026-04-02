@@ -267,6 +267,9 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	// Check if packet is in dead nonce list
 	if exists := t.deadNonceList.Find(interest.NameV, interest.NonceV.Unwrap()); exists {
 		core.Log.Debug(t, "Interest is looping (DNL)", "name", packet.Name, "nonce", interest.NonceV.Unwrap())
+		if incomingFace.Scope() == defn.Local {
+			core.Log.Warn(t, "Local Interest dropped by DNL", "name", packet.Name)
+		}
 		return
 	}
 
@@ -276,6 +279,9 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	if isDuplicate {
 		// Interest loop - since we don't use Nacks, just drop
 		core.Log.Debug(t, "Interest is looping (PIT)", "name", packet.Name)
+		if incomingFace.Scope() == defn.Local {
+			core.Log.Warn(t, "Local Interest dropped by PIT loop", "name", packet.Name)
+		}
 		return
 	}
 
@@ -384,6 +390,13 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	}
 
 	// Pass to strategy AfterReceiveInterest pipeline
+	if len(allowedNexthops) == 0 && incomingFace.Scope() == defn.Local && len(nexthops) > 0 {
+		core.Log.Warn(t, "All nexthops filtered for local Interest",
+			"name", packet.Name,
+			"nexthops", len(nexthops),
+			"inFace", packet.IncomingFaceID,
+			"localOnly", localFacesOnly)
+	}
 	strategy.AfterReceiveInterest(packet, pitEntry, incomingFace.FaceID(), allowedNexthops)
 }
 

@@ -127,6 +127,7 @@ func NewSvsALO(opts SvsAloOpts) (*SvsALO, error) {
 			groupPrefix: s.GroupPrefix(),
 			bootTime:    s.BootTime(),
 			onSnap:      s.snapRecvCallback,
+			afterFunc:   s.opts.Svs.AfterFunc,
 		}, s.state)
 	}
 

@@ -124,7 +124,7 @@ func (s *SnapshotNodeLatest) fetchSnap(node enc.Name, boot uint64) {
 		Callback: func(cstate ndn.ConsumeState) {
 			if cstate.Error() != nil {
 				// Do not try too fast in case NFD returns NACK
-				time.AfterFunc(2*time.Second, func() {
+				s.pss.afterFunc(2*time.Second, func() {
 					s.handleSnap(node, boot, cstate)
 				})
 			} else {

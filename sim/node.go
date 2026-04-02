@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/named-data/ndnd/dv/config"
+	"github.com/named-data/ndnd/fw/core"
 	"github.com/named-data/ndnd/fw/defn"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/ndn"
@@ -46,13 +47,19 @@ func NewNode(id uint32, clock Clock) *Node {
 		ifaceFaces: make(map[uint32]uint64),
 	}
 
+	// Override the forwarder's global clock to use simulation time.
+	// Without this, PIT expiration, CS freshness, and strategy suppression
+	// all use wall-clock time, which diverges from the simulated time.
+	// The CGo path does this in NdndSimGlobalInit; pure-Go tests need it here.
+	core.NowFunc = clock.Now
+
 	// Create the forwarder
 	n.Forwarder = NewSimForwarder(clock)
 
 	// Create the application-layer timer
 	n.appTimer = NewSimTimer(clock)
 
-	// Create the app face — sendFunc forwards to the forwarder's app face.
+	// Create the app face -- sendFunc forwards to the forwarder's app face.
 	// We use a closure that captures n so it can look up appFaceID at send time.
 	n.appFace = NewSimFace(func(frame []byte) {
 		n.Forwarder.ReceivePacket(n.appFaceID, frame)
@@ -70,7 +77,7 @@ func (n *Node) Start() error {
 
 	// Create internal application face in the forwarder
 	n.appFaceID = n.Forwarder.AddFace(defn.Local, defn.PointToPoint, func(faceID uint64, frame []byte) {
-		// Forwarder → App: deliver to the application face
+			// Forwarder -> App: deliver to the application face
 		n.appFace.Receive(frame)
 	})
 
@@ -226,26 +233,16 @@ func (n *Node) StartDv(network, router string, cfgJSON string) error {
 		return err
 	}
 
-	// Register DV sync prefixes on all link faces for neighbor reachability.
-	// This replaces the production DV's createFaces() which creates and
-	// configures neighbor faces — in simulation, faces already exist.
+	// Replicate production createFaces(): register the advertisement sync
+	// active prefix on each link face so initial heartbeat/sync Interests
+	// can reach neighbors. All other routes (PFS sync, PFS data, etc.)
+	// are installed by the production DV code through routeRegister()
+	// (on neighbor discovery) and updateFib() (on DV convergence).
+	// Strategies are set by DV's register() via NFDC.
 	syncActivePrefix := cfg.AdvertisementSyncActivePrefix()
-	pfxSyncGroup := cfg.PrefixTableGroupPrefix()
 	for _, faceID := range n.ifaceFaces {
-		n.Forwarder.AddRoute(syncActivePrefix, faceID, 1)
-		n.Forwarder.AddRoute(pfxSyncGroup, faceID, 1)
+		n.Forwarder.AddRouteWithOrigin(syncActivePrefix, faceID, 1, config.NlsrOrigin)
 	}
-
-	// Also add app face at the ACT prefix so incoming sync Interests from
-	// neighbors can be delivered to the DV handler. Without this, the ACT
-	// node in the FIB (link faces only) shadows the parent ADS node (app
-	// face), causing /localhop scope enforcement to drop all nexthops.
-	n.Forwarder.AddRoute(syncActivePrefix, n.appFaceID, 0)
-
-	// Set multicast strategy for sync prefixes so Interests go to ALL neighbors.
-	multicastStrategy := config.MulticastStrategy.Append(enc.NewVersionComponent(1))
-	n.Forwarder.SetStrategy(cfg.AdvertisementSyncPrefix(), multicastStrategy)
-	n.Forwarder.SetStrategy(pfxSyncGroup, multicastStrategy)
 
 	n.dvRouter = sdv
 	return nil

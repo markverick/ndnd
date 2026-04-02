@@ -59,14 +59,14 @@ func startConsumerLoop(
 		interest, err := engine.Spec().MakeInterest(iName, cfg, nil, nil)
 		if err != nil {
 			fmt.Fprintf(os.Stderr,
-				"[ndndSIM] FATAL: node %d seq %d MakeInterest failed: %v — consumer stopped\n",
+						"[ndndSIM] FATAL: node %d seq %d MakeInterest failed: %v -- consumer stopped\n",
 				nodeID, seq, err)
 			return // stops the chain; logged so the caller can see it
 		}
 		if err := engine.Express(interest, func(ndn.ExpressCallbackArgs) {}); err != nil {
 			fmt.Fprintf(os.Stderr,
 				"[ndndSIM] node %d seq %d Express error: %v\n", nodeID, seq, err)
-			// Express failure is not fatal — the Interest was just dropped.
+					// Express failure is not fatal -- the Interest was just dropped.
 			// Keep scheduling so the next attempt can succeed once the
 			// forwarder/FIB is ready.
 		}

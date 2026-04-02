@@ -110,7 +110,7 @@ func (f *SimFace) Send(pkt enc.Wire) error {
 }
 
 // Receive injects an incoming packet from the simulator into this face.
-// This is the entry point for ns-3 → NDNd packet delivery.
+// This is the entry point for ns-3 -> NDNd packet delivery.
 func (f *SimFace) Receive(frame []byte) {
 	f.mu.Lock()
 	handler := f.onPkt

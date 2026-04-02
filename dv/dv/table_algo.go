@@ -75,7 +75,8 @@ func (dv *Router) checkDeadNeighbors() {
 	for _, ns := range dv.neighbors.GetAll() {
 		// Check if the neighbor is entirely dead
 		if ns.IsDead() {
-			log.Info(dv, "Neighbor is dead", "router", ns.Name)
+			log.Info(dv, "Neighbor is dead", "router", ns.Name,
+				"age_ms", dv.NowFunc().Sub(ns.LastSeen()).Milliseconds())
 
 			// This is the ONLY place that can remove neighbors
 			dv.neighbors.Remove(ns.Name)
@@ -131,14 +132,14 @@ func (dv *Router) updateFib() {
 			// application prefix that should be installed directly in the
 			// FIB without adding PrefixSync or advert-data routes.
 			if dv.config.NetworkName().IsPrefix(router.Name()) {
-				// This is a router entry — install DV advert data route
+						// This is a router entry -- install DV advert data route
 				advRoute := enc.LOCALHOP.
 					Append(router.Name()...).
 					Append(enc.NewKeywordComponent("DV")).
 					Append(enc.NewKeywordComponent("ADV"))
 				register(advRoute, fes, 0)
 			} else {
-				// This is a prefix entry — install FIB route directly
+						// This is a prefix entry -- install FIB route directly
 				register(router.Name(), fes, 0)
 			}
 		} else {

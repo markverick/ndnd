@@ -46,7 +46,7 @@ func makeConnectedPair(t *testing.T) (clock *DeterministicClock, n0, n1 *Node, f
 		t.Fatalf("n1.Start: %v", err)
 	}
 
-	// Wire n0 ↔ n1 symmetrically.
+	// Wire n0 <-> n1 symmetrically.
 	face0to1 = n0.AddNetworkFace(0, func(_ uint64, frame []byte) {
 		n1.ReceiveOnInterface(0, frame)
 	})
@@ -63,7 +63,7 @@ func makeConnectedPair(t *testing.T) (clock *DeterministicClock, n0, n1 *Node, f
 
 // TestConsumerLoopKeepsSending verifies that startConsumerLoop keeps
 // scheduling interests and never silently stops mid-chain.
-// This is the regression test for: "MakeInterest fails → chain stops → 0 packets".
+// This is the regression test for: "MakeInterest fails -> chain stops -> 0 packets".
 func TestConsumerLoopKeepsSending(t *testing.T) {
 	clock := NewDeterministicClock(time.Unix(0, 0))
 	node := NewNode(0, clock)
@@ -118,14 +118,14 @@ func TestConsumerLoopCountsInterests(t *testing.T) {
 		t.Fatalf("AttachHandler: %v", err)
 	}
 
-	// n1 needs a FIB route /ndn/test → appFaceID so the forwarder delivers
+	// n1 needs a FIB route /ndn/test -> appFaceID so the forwarder delivers
 	// incoming Interests to the producer app.
 	n1.AddRoute(prefix, n1.AppFaceID(), 0)
 
-	// n0 needs a FIB route /ndn/test → face0to1 so interests leave node 0.
+	// n0 needs a FIB route /ndn/test -> face0to1 so interests leave node 0.
 	n0.AddRoute(prefix, face0to1, 0)
 
-	const freq = 100.0 // 100 Hz → 10 ms per interest
+	const freq = 100.0 // 100 Hz -> 10 ms per interest
 	const want = 20    // expect at least 20 Interests within the timeout
 
 	stopped := startConsumerLoop(n0.Engine(), n0.Clock(), 0, prefix, freq, 4*time.Second)
@@ -141,7 +141,7 @@ func TestConsumerLoopCountsInterests(t *testing.T) {
 
 	got := atomic.LoadInt64(&received)
 	if got < want {
-		t.Fatalf("producer received %d Interests, want at least %d — "+
+			t.Fatalf("producer received %d Interests, want at least %d -- "+
 			"consumer loop likely stopped mid-chain", got, want)
 	}
 }

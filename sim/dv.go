@@ -29,6 +29,7 @@ type SimDvRouter struct {
 	// Configuration intervals
 	heartbeatInterval time.Duration
 	deadcheckInterval time.Duration
+
 }
 
 // NewSimDvRouter creates a DV router for a simulation node.
@@ -55,7 +56,7 @@ func NewSimDvRouter(clock Clock, engine ndn.Engine, cfg *config.Config) (*SimDvR
 		return func() { clock.Cancel(id) }
 	}
 
-	// Set nfdc to synchronous mode — no goroutine, direct ExecMgmtCmd
+	// Set nfdc to synchronous mode -- no goroutine, direct ExecMgmtCmd
 	router.Nfdc().Synchronous = true
 
 	return &SimDvRouter{
