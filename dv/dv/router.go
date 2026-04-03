@@ -288,7 +288,7 @@ func (dv *Router) register() (err error) {
 	for _, prefix := range pfxs {
 		dv.execMgmtRetry("pet", "add-nexthop", &mgmt.ControlArgs{
 			Name: prefix,
-		}, -1)
+		})
 	}
 	// Allow outgoing local-prefix-sync Interests to use two-phase forwarding.
 	// Incoming Interests still terminate locally on the same prefix.
@@ -297,13 +297,13 @@ func (dv *Router) register() (err error) {
 		Name:   dv.pfx.SyncPrefix(),
 		Egress: &mgmt.EgressRecord{Name: neighborsPrefix.Clone()},
 		Flags:  optional.Some(uint64(1)),
-	}, -1)
+	})
 	// Set Advertisement Sync to localhop neighbors
 	dv.execMgmtRetry("pet", "add-egress", &mgmt.ControlArgs{
 		Name:   dv.config.AdvertisementSyncPrefix(),
 		Egress: &mgmt.EgressRecord{Name: neighborsPrefix.Clone()},
 		Flags:  optional.Some(uint64(1)),
-	}, -1)
+	})
 
 	// Force multicast strategy for sync prefixes to broadcast.
 	broadcastPrefixes := []enc.Name{
@@ -314,14 +314,14 @@ func (dv *Router) register() (err error) {
 		dv.execMgmtRetry("multicast-strategy-choice", "set", &mgmt.ControlArgs{
 			Name:     prefix,
 			Strategy: &mgmt.Strategy{Name: defn.BROADCAST_STRATEGY},
-		}, -1)
+		})
 	}
 
 	return nil
 }
 
-func (dv *Router) execMgmtRetry(module, cmd string, args *mgmt.ControlArgs, retries int) {
-	for i := 0; i < retries || retries < 0; i++ {
+func (dv *Router) execMgmtRetry(module, cmd string, args *mgmt.ControlArgs) {
+	for i := 0; ; i++ {
 		if _, err := dv.engine.ExecMgmtCmd(module, cmd, args); err != nil {
 			log.Error(dv, "Forwarder command failed", "err", err, "attempt", i,
 				"module", module, "cmd", cmd, "args", args)
