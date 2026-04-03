@@ -70,13 +70,14 @@ func (s *BroadcastStrategy) AfterReceiveMulticastInterest(
 		"name", packet.Name,
 		"deliveredToLocal", deliveredToLocal,
 	)
-	if len(petEntry.EgressRouters) == 0 {
-		core.Log.Trace(s, "Broadcast without PET egress routers; drop", "name", packet.Name)
-		return
-	}
+	seen := make(map[uint64]struct{})
+	for _, entry := range table.FibStrategyTable.GetAllFIBEntries() {
+		for _, nextHop := range entry.GetNextHops() {
+			if _, ok := seen[nextHop.Nexthop]; ok {
+				continue
+			}
+			seen[nextHop.Nexthop] = struct{}{}
 
-	for _, er := range petEntry.EgressRouters {
-		for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(er) {
 			if nextHop.Nexthop == packet.IncomingFaceID {
 				continue
 			}
