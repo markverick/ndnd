@@ -292,17 +292,16 @@ func (dv *Router) register() (err error) {
 	}
 	// Allow outgoing local-prefix-sync Interests to use two-phase forwarding.
 	// Incoming Interests still terminate locally on the same prefix.
-	// Add multicast flag to the PET announcement
 	dv.execMgmtRetry("pet", "add-egress", &mgmt.ControlArgs{
-		Name:   dv.pfx.SyncPrefix(),
-		Egress: &mgmt.EgressRecord{Name: neighborsPrefix.Clone()},
-		Flags:  optional.Some(uint64(1)),
+		Name:      dv.pfx.SyncPrefix(),
+		Egress:    &mgmt.EgressRecord{Name: neighborsPrefix.Clone()},
+		Multicast: true,
 	})
 	// Set Advertisement Sync to localhop neighbors
 	dv.execMgmtRetry("pet", "add-egress", &mgmt.ControlArgs{
-		Name:   dv.config.AdvertisementSyncPrefix(),
-		Egress: &mgmt.EgressRecord{Name: neighborsPrefix.Clone()},
-		Flags:  optional.Some(uint64(1)),
+		Name:      dv.config.AdvertisementSyncPrefix(),
+		Egress:    &mgmt.EgressRecord{Name: neighborsPrefix.Clone()},
+		Multicast: true,
 	})
 
 	// Force multicast strategy for sync prefixes to broadcast.

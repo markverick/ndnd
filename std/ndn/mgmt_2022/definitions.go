@@ -77,6 +77,8 @@ type ControlArgs struct {
 	Flags optional.Optional[uint64] `tlv:"0x6c"`
 	//+field:natural:optional
 	Mask optional.Optional[uint64] `tlv:"0x70"`
+	//+field:bool
+	Multicast bool `tlv:"0x90"`
 	//+field:struct:Strategy
 	Strategy *Strategy `tlv:"0x6b"`
 	//+field:natural:optional

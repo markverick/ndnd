@@ -251,6 +251,10 @@ func (encoder *ControlArgsEncoder) Init(value *ControlArgs) {
 		l += 1
 		l += uint(1 + enc.Nat(optval).EncodingLength())
 	}
+	if value.Multicast {
+		l += 1
+		l += 1
+	}
 	if value.Strategy != nil {
 		l += 1
 		l += uint(enc.TLNum(encoder.Strategy_encoder.Length).EncodingLength())
@@ -379,6 +383,12 @@ func (encoder *ControlArgsEncoder) EncodeInto(value *ControlArgs, buf []byte) {
 		pos += uint(1 + buf[pos])
 
 	}
+	if value.Multicast {
+		buf[pos] = byte(144)
+		pos += 1
+		buf[pos] = byte(0)
+		pos += 1
+	}
 	if value.Strategy != nil {
 		buf[pos] = byte(107)
 		pos += 1
@@ -453,6 +463,7 @@ func (context *ControlArgsParsingContext) Parse(reader enc.WireView, ignoreCriti
 	var handled_Count bool = false
 	var handled_Flags bool = false
 	var handled_Mask bool = false
+	var handled_Multicast bool = false
 	var handled_Strategy bool = false
 	var handled_ExpirationPeriod bool = false
 	var handled_FacePersistency bool = false
@@ -683,6 +694,13 @@ func (context *ControlArgsParsingContext) Parse(reader enc.WireView, ignoreCriti
 						value.Mask.Set(optval)
 					}
 				}
+			case 144:
+				if true {
+					handled = true
+					handled_Multicast = true
+					value.Multicast = true
+					err = reader.Skip(int(l))
+				}
 			case 107:
 				if true {
 					handled = true
@@ -855,6 +873,9 @@ func (context *ControlArgsParsingContext) Parse(reader enc.WireView, ignoreCriti
 	if !handled_Mask && err == nil {
 		value.Mask.Unset()
 	}
+	if !handled_Multicast && err == nil {
+		value.Multicast = false
+	}
 	if !handled_Strategy && err == nil {
 		value.Strategy = nil
 	}
@@ -932,6 +953,7 @@ func (value *ControlArgs) ToDict() map[string]any {
 	if optval, ok := value.Mask.Get(); ok {
 		dict["Mask"] = optval
 	}
+	dict["Multicast"] = value.Multicast
 	if value.Strategy != nil {
 		dict["Strategy"] = value.Strategy.ToDict()
 	}
@@ -1084,6 +1106,18 @@ func DictToControlArgs(dict map[string]any) (*ControlArgs, error) {
 		}
 	} else {
 		value.Mask.Unset()
+	}
+	if err != nil {
+		return nil, err
+	}
+	if vv, ok := dict["Multicast"]; ok {
+		if v, ok := vv.(bool); ok {
+			value.Multicast = v
+		} else {
+			err = enc.ErrIncompatibleType{Name: "Multicast", TypeNum: 144, ValType: "bool", Value: vv}
+		}
+	} else {
+		value.Multicast = false
 	}
 	if err != nil {
 		return nil, err

@@ -425,9 +425,8 @@ func (pfx *PrefixModule) applyPetOps(ops []petEgressOp) {
 		}
 		if op.add {
 			cmd = "add-egress"
-			// Signal the Sync group (multicast) flag to the forwarder's PET via Flags bit 0.
 			if op.multicast {
-				args.Flags = optional.Some(uint64(1))
+				args.Multicast = true
 			}
 		}
 

@@ -292,7 +292,7 @@ func (dv *Router) mgmtOnPrefix(args ndn.InterestHandlerArgs) {
 			responseParams.ExpirationPeriod = optional.Some(expires)
 		}
 
-		multicast := params.Val.Flags.GetOr(0)&1 != 0
+		multicast := params.Val.Multicast
 		dv.mutex.Lock()
 		dv.pfx.Announce(name, faceID, cost, multicast, validity)
 		dv.mutex.Unlock()
