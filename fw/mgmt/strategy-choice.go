@@ -19,10 +19,25 @@ import (
 // StrategyChoiceModule is the module that handles Strategy Choice Management.
 type StrategyChoiceModule struct {
 	manager *Thread
+	kind    strategyChoiceKind
+}
+
+type strategyChoiceKind int
+
+const (
+	strategyChoiceUnicast strategyChoiceKind = iota
+	strategyChoiceMulticast
+)
+
+func NewStrategyChoiceModule(kind strategyChoiceKind) *StrategyChoiceModule {
+	return &StrategyChoiceModule{kind: kind}
 }
 
 // (AI GENERATED DESCRIPTION): Returns the identifier string `"mgmt-strategy"` for the StrategyChoiceModule.
 func (s *StrategyChoiceModule) String() string {
+	if s.kind == strategyChoiceMulticast {
+		return "mgmt-multicast-strategy"
+	}
 	return "mgmt-strategy"
 }
 
@@ -40,7 +55,11 @@ func (s *StrategyChoiceModule) getManager() *Thread {
 func (s *StrategyChoiceModule) handleIncomingInterest(interest *Interest) {
 	// Only allow from /localhost
 	if !LOCAL_PREFIX.IsPrefix(interest.Name()) {
-		core.Log.Warn(s, "Received strategy management Interest from non-local source - DROP")
+		if s.kind == strategyChoiceMulticast {
+			core.Log.Warn(s, "Received multicast strategy management Interest from non-local source - DROP")
+		} else {
+			core.Log.Warn(s, "Received strategy management Interest from non-local source - DROP")
+		}
 		return
 	}
 
@@ -79,6 +98,24 @@ func (s *StrategyChoiceModule) set(interest *Interest) {
 
 	if params.Strategy == nil {
 		s.manager.sendCtrlResp(interest, 400, "ControlParameters is incorrect (missing Strategy)", nil)
+		return
+	}
+
+	if s.kind == strategyChoiceMulticast {
+		if !params.Strategy.Name.Equal(defn.BROADCAST_STRATEGY) && !params.Strategy.Name.Equal(defn.BIER_STRATEGY) {
+			core.Log.Warn(s, "Invalid multicast strategy", "strategy", params.Strategy.Name)
+			s.manager.sendCtrlResp(interest, 404, "Invalid multicast strategy", nil)
+			return
+		}
+
+		table.MulticastStrategyTable.SetStrategyEnc(params.Name, params.Strategy.Name)
+
+		s.manager.sendCtrlResp(interest, 200, "OK", &mgmt.ControlArgs{
+			Name:     params.Name,
+			Strategy: params.Strategy,
+		})
+
+		core.Log.Info(s, "Set multicast strategy", "name", params.Name, "strategy", params.Strategy.Name)
 		return
 	}
 
@@ -164,8 +201,13 @@ func (s *StrategyChoiceModule) unset(interest *Interest) {
 		return
 	}
 
-	table.FibStrategyTable.UnSetStrategyEnc(params.Name)
-	core.Log.Info(s, "Unset Strategy", "name", params.Name)
+	if s.kind == strategyChoiceMulticast {
+		table.MulticastStrategyTable.UnSetStrategyEnc(params.Name)
+		core.Log.Info(s, "Unset multicast strategy", "name", params.Name)
+	} else {
+		table.FibStrategyTable.UnSetStrategyEnc(params.Name)
+		core.Log.Info(s, "Unset Strategy", "name", params.Name)
+	}
 
 	s.manager.sendCtrlResp(interest, 200, "OK", &mgmt.ControlArgs{Name: params.Name})
 }
@@ -179,7 +221,20 @@ func (s *StrategyChoiceModule) list(interest *Interest) {
 
 	// Generate new dataset
 	// TODO: For thread safety, we should lock the Strategy table from writes until we are done
-	entries := table.FibStrategyTable.GetAllForwardingStrategies()
+	var entries []table.FibStrategyEntry
+	name := LOCAL_PREFIX.Append(
+		enc.NewGenericComponent("strategy-choice"),
+		enc.NewGenericComponent("list"),
+	)
+	if s.kind == strategyChoiceMulticast {
+		entries = table.MulticastStrategyTable.GetAllForwardingStrategies()
+		name = LOCAL_PREFIX.Append(
+			enc.NewGenericComponent("multicast-strategy-choice"),
+			enc.NewGenericComponent("list"),
+		)
+	} else {
+		entries = table.FibStrategyTable.GetAllForwardingStrategies()
+	}
 	choices := []*mgmt.StrategyChoice{}
 	for _, fsEntry := range entries {
 		choices = append(choices, &mgmt.StrategyChoice{
@@ -189,9 +244,5 @@ func (s *StrategyChoiceModule) list(interest *Interest) {
 	}
 	dataset := &mgmt.StrategyChoiceMsg{StrategyChoices: choices}
 
-	name := LOCAL_PREFIX.Append(
-		enc.NewGenericComponent("strategy-choice"),
-		enc.NewGenericComponent("list"),
-	)
 	s.manager.sendStatusDataset(interest, name, dataset.Encode())
 }
