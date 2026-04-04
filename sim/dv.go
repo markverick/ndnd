@@ -12,6 +12,7 @@ import (
 	"github.com/named-data/ndnd/std/ndn"
 	mgmt "github.com/named-data/ndnd/std/ndn/mgmt_2022"
 	sig "github.com/named-data/ndnd/std/security/signer"
+	ndn_sync "github.com/named-data/ndnd/std/sync"
 	"github.com/named-data/ndnd/std/types/optional"
 )
 
@@ -29,6 +30,7 @@ type SimDvRouter struct {
 	// Configuration intervals
 	heartbeatInterval time.Duration
 	deadcheckInterval time.Duration
+	syncActivePrefix  enc.Name
 
 }
 
@@ -65,6 +67,7 @@ func NewSimDvRouter(clock Clock, engine ndn.Engine, cfg *config.Config) (*SimDvR
 		engine:            engine,
 		heartbeatInterval: cfg.AdvertisementSyncInterval(),
 		deadcheckInterval: cfg.RouterDeadInterval(),
+		syncActivePrefix:  cfg.AdvertisementSyncActivePrefix(),
 	}, nil
 }
 
@@ -111,6 +114,10 @@ func (sd *SimDvRouter) scheduleDeadcheck() {
 // Router returns the underlying DV router.
 func (sd *SimDvRouter) Router() *dv.Router {
 	return sd.router
+}
+
+func (sd *SimDvRouter) PrefixSyncSuppressionStats() ndn_sync.SuppressStats {
+	return sd.router.PrefixSyncSuppressionStats()
 }
 
 // AnnouncePrefix sends a readvertise Interest to the DV router's management

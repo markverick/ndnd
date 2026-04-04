@@ -592,6 +592,27 @@ func NdndSimGetRibEntryCount(nodeId C.uint32_t, prefixStr *C.char, prefixLen C.i
 	return C.int(count)
 }
 
+//export NdndSimGetDvSuppressionStats
+func NdndSimGetDvSuppressionStats(nodeId C.uint32_t, enter *C.uint64_t, ok *C.uint64_t, fail *C.uint64_t) C.int {
+	if globalRuntime == nil || enter == nil || ok == nil || fail == nil {
+		return -1
+	}
+	node := globalRuntime.GetNode(uint32(nodeId))
+	if node == nil {
+		return -1
+	}
+	dv := node.DvRouter()
+	if dv == nil {
+		return -1
+	}
+
+	stats := dv.PrefixSyncSuppressionStats()
+	*enter = C.uint64_t(stats.Enter)
+	*ok = C.uint64_t(stats.Ok)
+	*fail = C.uint64_t(stats.Fail)
+	return 0
+}
+
 //export NdndSimAnnouncePrefixToDv
 func NdndSimAnnouncePrefixToDv(nodeId C.uint32_t, prefixStr *C.char, prefixLen C.int) C.int {
 	if globalRuntime == nil {

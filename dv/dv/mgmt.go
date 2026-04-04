@@ -1,6 +1,7 @@
 package dv
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/named-data/ndnd/dv/tlv"
@@ -27,6 +28,8 @@ func (dv *Router) mgmtOnInterest(args ndn.InterestHandlerArgs) {
 	switch name[pfxLen].String() {
 	case "status":
 		dv.mgmtOnStatus(args)
+	case "svs-status":
+		dv.mgmtOnSvsStatus(args)
 	case "rib":
 		dv.mgmtOnRib(args)
 	default:
@@ -58,6 +61,51 @@ func (dv *Router) mgmtOnStatus(args ndn.InterestHandlerArgs) {
 	data, err := dv.engine.Spec().MakeData(name, cfg, status.Encode(), nil)
 	if err != nil {
 		log.Warn(dv, "Failed to make readvertise response Data", "err", err)
+		return
+	}
+
+	args.Reply(data.Wire)
+}
+
+func (dv *Router) mgmtOnSvsStatus(args ndn.InterestHandlerArgs) {
+	type suppressResponse struct {
+		Version           string `json:"version"`
+		NetworkName       string `json:"network_name"`
+		RouterName        string `json:"router_name"`
+		PrefixSyncEnabled bool   `json:"prefix_sync_enabled"`
+		Suppression       struct {
+			Enter uint64 `json:"enter"`
+			Ok    uint64 `json:"ok"`
+			Fail  uint64 `json:"fail"`
+		} `json:"suppression"`
+	}
+
+	stats := dv.PrefixSyncSuppressionStats()
+	resp := suppressResponse{
+		Version:           utils.NDNdVersion,
+		NetworkName:       dv.config.NetworkName().String(),
+		RouterName:        dv.config.RouterName().String(),
+		PrefixSyncEnabled: dv.PrefixSyncEnabled(),
+	}
+	resp.Suppression.Enter = stats.Enter
+	resp.Suppression.Ok = stats.Ok
+	resp.Suppression.Fail = stats.Fail
+
+	body, err := json.Marshal(resp)
+	if err != nil {
+		log.Warn(dv, "Failed to marshal SVS status response", "err", err)
+		return
+	}
+
+	name := args.Interest.Name()
+	cfg := &ndn.DataConfig{
+		ContentType: optional.Some(ndn.ContentTypeBlob),
+		Freshness:   optional.Some(time.Second),
+	}
+
+	data, err := dv.engine.Spec().MakeData(name, cfg, enc.Wire{body}, nil)
+	if err != nil {
+		log.Warn(dv, "Failed to make SVS status response Data", "err", err)
 		return
 	}
 

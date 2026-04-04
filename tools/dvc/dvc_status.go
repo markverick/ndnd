@@ -51,6 +51,37 @@ func (t *Tool) DvStatus() (*spec_dv.Status, error) {
 	return status, nil
 }
 
+func (t *Tool) DvSvsStatus() ([]byte, error) {
+	name := enc.Name{
+		enc.LOCALHOST,
+		enc.NewGenericComponent("nlsr"),
+		enc.NewGenericComponent("svs-status"),
+	}
+	cfg := &ndn.InterestConfig{
+		MustBeFresh: true,
+		Lifetime:    optional.Some(time.Second),
+		Nonce:       utils.ConvertNonce(t.engine.Timer().Nonce()),
+	}
+
+	interest, err := t.engine.Spec().MakeInterest(name, cfg, nil, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	ch := make(chan ndn.ExpressCallbackArgs, 1)
+	err = t.engine.Express(interest, func(args ndn.ExpressCallbackArgs) { ch <- args })
+	if err != nil {
+		panic(err)
+	}
+	eargs := <-ch
+
+	if eargs.Result != ndn.InterestResultData {
+		return nil, fmt.Errorf("interest failed: %s", eargs.Result)
+	}
+
+	return eargs.Data.Content().Join(), nil
+}
+
 // (AI GENERATED DESCRIPTION): Retrieves the DV router status and prints general status metrics to stdout.
 func (t *Tool) RunDvStatus(_ *cobra.Command, args []string) {
 	t.Start()
@@ -70,4 +101,17 @@ func (t *Tool) RunDvStatus(_ *cobra.Command, args []string) {
 	p.Print("nRibEntries", status.NRibEntries)
 	p.Print("nNeighbors", status.NNeighbors)
 	p.Print("nFibEntries", status.NFibEntries)
+}
+
+func (t *Tool) RunDvSvsStatus(_ *cobra.Command, args []string) {
+	t.Start()
+	defer t.Stop()
+
+	body, err := t.DvSvsStatus()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to get SVS status: %+v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println(string(body))
 }

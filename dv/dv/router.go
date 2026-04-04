@@ -24,6 +24,40 @@ import (
 
 const PrefixSnapThreshold = 50
 
+func (dv *Router) PrefixSyncEnabled() bool {
+	dv.mutex.Lock()
+	defer dv.mutex.Unlock()
+	return dv.pfxSvs != nil
+}
+
+func (dv *Router) PrefixSyncSuppressionStats() ndn_sync.SuppressStats {
+	dv.mutex.Lock()
+	defer dv.mutex.Unlock()
+	if dv.pfxSvs == nil {
+		return ndn_sync.SuppressStats{}
+	}
+	return dv.pfxSvs.SVS().SuppressionStats()
+}
+
+func (dv *Router) prefixSnapshotStrategy() ndn_sync.Snapshot {
+	if dv.config.DisablePrefixSnap {
+		return &ndn_sync.SnapshotNull{}
+	}
+
+	threshold := dv.config.PrefixSnapThreshold
+	if threshold == 0 {
+		threshold = PrefixSnapThreshold
+	}
+
+	return &ndn_sync.SnapshotNodeLatest{
+		Client: dv.client,
+		SnapMe: func(name enc.Name) (enc.Wire, error) {
+			return dv.pfx.Snap(), nil
+		},
+		Threshold: threshold,
+	}
+}
+
 type Router struct {
 	// go-ndn app that this router is attached to
 	engine ndn.Engine
@@ -494,13 +528,7 @@ func (dv *Router) createPrefixTable() {
 			NowFunc:     func() time.Time { return dv.NowFunc() },
 			AfterFunc:   func(d time.Duration, f func()) func() { return dv.AfterFunc(d, f) },
 		},
-		Snapshot: &ndn_sync.SnapshotNodeLatest{
-			Client: dv.client,
-			SnapMe: func(name enc.Name) (enc.Wire, error) {
-				return dv.pfx.Snap(), nil
-			},
-			Threshold: PrefixSnapThreshold,
-		},
+		Snapshot: dv.prefixSnapshotStrategy(),
 	})
 	if err != nil {
 		panic(err)

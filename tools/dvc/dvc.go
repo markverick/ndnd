@@ -19,6 +19,11 @@ func Cmds() []*cobra.Command {
 		Args:  cobra.NoArgs,
 		Run:   t.RunDvStatus,
 	}, {
+		Use:   "svs-status",
+		Short: "Print PrefixSync SVS suppression counters as JSON",
+		Args:  cobra.NoArgs,
+		Run:   t.RunDvSvsStatus,
+	}, {
 		Use:   "link-create NEIGHBOR-URI",
 		Short: "Create a new active neighbor link",
 		Args:  cobra.ExactArgs(1),

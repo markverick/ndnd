@@ -119,8 +119,15 @@ func (n *Node) AddNetworkFace(ifIndex uint32, sendFunc FwSendFunc) uint64 {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
+	if faceID, ok := n.ifaceFaces[ifIndex]; ok {
+		return faceID
+	}
+
 	faceID := n.Forwarder.AddFace(defn.NonLocal, defn.PointToPoint, sendFunc)
 	n.ifaceFaces[ifIndex] = faceID
+	if n.dvRouter != nil {
+		n.Forwarder.AddRouteWithOrigin(n.dvRouter.syncActivePrefix, faceID, 1, config.NlsrOrigin)
+	}
 	return faceID
 }
 

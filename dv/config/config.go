@@ -46,6 +46,11 @@ type Config struct {
 	// starts fetching prefix tables from remote routers.
 	// 0 means start immediately (default).
 	PrefixSyncDelay_ms uint64 `json:"prefix_sync_delay"`
+	// Threshold for taking/fetching PrefixSync snapshots.
+	// 0 means use the built-in default.
+	PrefixSnapThreshold uint64 `json:"prefix_snap_threshold"`
+	// Disable PrefixSync snapshots entirely and use incremental fetch only.
+	DisablePrefixSnap bool `json:"disable_prefix_snap"`
 	// URI specifying KeyChain location.
 	KeyChainUri string `json:"keychain"`
 	// List of trust anchor full names.
@@ -97,6 +102,7 @@ func DefaultConfig() *Config {
 		Router:                       "", // invalid
 		AdvertisementSyncInterval_ms: 5000,
 		RouterDeadInterval_ms:        30000,
+		DisablePrefixSnap:            true,
 		KeyChainUri:                  "undefined",
 	}
 }

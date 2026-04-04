@@ -32,6 +32,11 @@ type SvSync struct {
 	suppress bool
 	merge    SvMap[uint64]
 
+	// Suppression counters
+	SuppressEnter   atomic.Uint64
+	SuppressSuccess atomic.Uint64
+	SuppressFail    atomic.Uint64
+
 	// Buffered wires (passive mode)
 	passiveWiresSv     SvMap[enc.Wire]
 	passiveWillPersist atomic.Bool
@@ -87,6 +92,12 @@ type SvSyncUpdate struct {
 type svSyncRecvSvArgs struct {
 	sv   *spec_svs.StateVector
 	data enc.Wire
+}
+
+type SuppressStats struct {
+	Enter uint64 `json:"enter"`
+	Ok    uint64 `json:"ok"`
+	Fail  uint64 `json:"fail"`
 }
 
 // NewSvSync creates a new SV Sync instance.
@@ -156,6 +167,14 @@ func NewSvSync(opts SvSyncOpts) *SvSync {
 		passiveWillPersist: atomic.Bool{},
 
 		faceCancel: func() {},
+	}
+}
+
+func (s *SvSync) SuppressionStats() SuppressStats {
+	return SuppressStats{
+		Enter: s.SuppressEnter.Load(),
+		Ok:    s.SuppressSuccess.Load(),
+		Fail:  s.SuppressFail.Load(),
 	}
 }
 
@@ -403,6 +422,8 @@ func (s *SvSync) onReceiveStateVector(args svSyncRecvSvArgs) {
 	// [Spec] Incoming Sync Interest is outdated.
 	// [Spec] Move to Suppression State.
 	s.suppress = true
+	s.SuppressEnter.Add(1)
+	log.Info(s, "SVS suppress-enter", "total", s.SuppressEnter.Load())
 	s.merge.Clear()
 
 	// [Spec] When entering Suppression State, reset
@@ -419,11 +440,15 @@ func (s *SvSync) timerExpired() {
 	if s.suppress {
 		// [Spec] If MergedStateVector is up-to-date; no inconsistency.
 		if !s.state.IsNewerThan(s.merge, func(a, b uint64) bool { return a > b }) {
+			s.SuppressSuccess.Add(1)
+			log.Info(s, "SVS suppress-ok", "total", s.SuppressSuccess.Load())
 			s.enterSteadyState()
 			return
 		}
 		// [Spec] If MergedStateVector is outdated; inconsistent state.
 		// Emit up-to-date Sync Interest.
+		s.SuppressFail.Add(1)
+		log.Info(s, "SVS suppress-fail", "total", s.SuppressFail.Load())
 	}
 
 	// [Spec] On expiration of timer emit a Sync Interest
