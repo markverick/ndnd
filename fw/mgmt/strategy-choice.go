@@ -101,7 +101,8 @@ func (s *StrategyChoiceModule) set(interest *Interest) {
 		return
 	}
 
-	if s.kind == strategyChoiceMulticast {
+	switch s.kind {
+	case strategyChoiceMulticast:
 		if !params.Strategy.Name.Equal(defn.BROADCAST_STRATEGY) && !params.Strategy.Name.Equal(defn.BIER_STRATEGY) {
 			core.Log.Warn(s, "Invalid multicast strategy", "strategy", params.Strategy.Name)
 			s.manager.sendCtrlResp(interest, 404, "Invalid multicast strategy", nil)
@@ -116,6 +117,12 @@ func (s *StrategyChoiceModule) set(interest *Interest) {
 		})
 
 		core.Log.Info(s, "Set multicast strategy", "name", params.Name, "strategy", params.Strategy.Name)
+		return
+	case strategyChoiceUnicast:
+		// fallthrough to unicast handling below
+	default:
+		core.Log.Warn(s, "Unknown strategy choice kind", "kind", s.kind)
+		s.manager.sendCtrlResp(interest, 500, "Internal error", nil)
 		return
 	}
 
@@ -201,12 +208,17 @@ func (s *StrategyChoiceModule) unset(interest *Interest) {
 		return
 	}
 
-	if s.kind == strategyChoiceMulticast {
+	switch s.kind {
+	case strategyChoiceMulticast:
 		table.MulticastStrategyTable.UnSetStrategyEnc(params.Name)
 		core.Log.Info(s, "Unset multicast strategy", "name", params.Name)
-	} else {
+	case strategyChoiceUnicast:
 		table.FibStrategyTable.UnSetStrategyEnc(params.Name)
 		core.Log.Info(s, "Unset Strategy", "name", params.Name)
+	default:
+		core.Log.Warn(s, "Unknown strategy choice kind", "kind", s.kind)
+		s.manager.sendCtrlResp(interest, 500, "Internal error", nil)
+		return
 	}
 
 	s.manager.sendCtrlResp(interest, 200, "OK", &mgmt.ControlArgs{Name: params.Name})
@@ -226,14 +238,18 @@ func (s *StrategyChoiceModule) list(interest *Interest) {
 		enc.NewGenericComponent("strategy-choice"),
 		enc.NewGenericComponent("list"),
 	)
-	if s.kind == strategyChoiceMulticast {
+	switch s.kind {
+	case strategyChoiceMulticast:
 		entries = table.MulticastStrategyTable.GetAllForwardingStrategies()
 		name = LOCAL_PREFIX.Append(
 			enc.NewGenericComponent("multicast-strategy-choice"),
 			enc.NewGenericComponent("list"),
 		)
-	} else {
+	case strategyChoiceUnicast:
 		entries = table.FibStrategyTable.GetAllForwardingStrategies()
+	default:
+		core.Log.Warn(s, "Unknown strategy choice kind", "kind", s.kind)
+		return
 	}
 	choices := []*mgmt.StrategyChoice{}
 	for _, fsEntry := range entries {
