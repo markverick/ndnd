@@ -89,10 +89,6 @@ func (s *BierStrategy) AfterReceiveMulticastInterest(
 	deliveredToLocal bool,
 ) {
 	if len(packet.Bier) == 0 {
-		if len(petEntry.EgressRouters) == 0 {
-			core.Log.Trace(s, "Multicast BIER empty without PET egress; drop", "name", packet.Name)
-			return
-		}
 		core.Log.Trace(s, "BFIR: encoding BIER bit-string", "name", packet.Name, "egress-count", len(petEntry.EgressRouters))
 		packet.Bier = Bift.BuildBierBitString(petEntry.EgressRouters)
 	}
