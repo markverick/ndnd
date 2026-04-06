@@ -52,7 +52,7 @@ func (c *Client) announcePrefix_(args ndn.Announcement) {
 			Cost: optional.Some(args.Cost),
 		}
 		if args.Multicast {
-			ctrlArgs.Flags = optional.Some(uint64(1))
+			ctrlArgs.Multicast = true
 		}
 		_, err := mgmt.ExecServiceCmd(
 			c.engine, true, "dv", "prefix", "announce",
