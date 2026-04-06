@@ -101,31 +101,6 @@ func (s *StrategyChoiceModule) set(interest *Interest) {
 		return
 	}
 
-	switch s.kind {
-	case strategyChoiceMulticast:
-		if !params.Strategy.Name.Equal(defn.BROADCAST_STRATEGY) && !params.Strategy.Name.Equal(defn.BIER_STRATEGY) {
-			core.Log.Warn(s, "Invalid multicast strategy", "strategy", params.Strategy.Name)
-			s.manager.sendCtrlResp(interest, 404, "Invalid multicast strategy", nil)
-			return
-		}
-
-		table.MulticastStrategyTable.SetStrategyEnc(params.Name, params.Strategy.Name)
-
-		s.manager.sendCtrlResp(interest, 200, "OK", &mgmt.ControlArgs{
-			Name:     params.Name,
-			Strategy: params.Strategy,
-		})
-
-		core.Log.Info(s, "Set multicast strategy", "name", params.Name, "strategy", params.Strategy.Name)
-		return
-	case strategyChoiceUnicast:
-		// fallthrough to unicast handling below
-	default:
-		core.Log.Warn(s, "Unknown strategy choice kind", "kind", s.kind)
-		s.manager.sendCtrlResp(interest, 500, "Internal error", nil)
-		return
-	}
-
 	if !defn.STRATEGY_PREFIX.IsPrefix(params.Strategy.Name) {
 		core.Log.Warn(s, "Invalid strategy", "strategy", params.Strategy.Name)
 		s.manager.sendCtrlResp(interest, 404, "Invalid strategy", nil)
@@ -175,14 +150,26 @@ func (s *StrategyChoiceModule) set(interest *Interest) {
 		params.Strategy.Name = params.Strategy.Name.
 			Append(enc.NewVersionComponent(strategyVersion))
 	}
-	table.FibStrategyTable.SetStrategyEnc(params.Name, params.Strategy.Name)
+
+	switch s.kind {
+	case strategyChoiceMulticast:
+		table.MulticastStrategyTable.SetStrategyEnc(params.Name, params.Strategy.Name)
+		core.Log.Info(s, "Set multicast strategy", "name", params.Name, "strategy", params.Strategy.Name)
+
+	case strategyChoiceUnicast:
+		table.FibStrategyTable.SetStrategyEnc(params.Name, params.Strategy.Name)
+		core.Log.Info(s, "Set strategy", "name", params.Name, "strategy", params.Strategy.Name)
+
+	default:
+		core.Log.Warn(s, "Unknown strategy choice kind", "kind", s.kind)
+		s.manager.sendCtrlResp(interest, 500, "Internal error", nil)
+		return
+	}
 
 	s.manager.sendCtrlResp(interest, 200, "OK", &mgmt.ControlArgs{
 		Name:     params.Name,
 		Strategy: params.Strategy,
 	})
-
-	core.Log.Info(s, "Set strategy", "name", params.Name, "strategy", params.Strategy.Name)
 }
 
 // (AI GENERATED DESCRIPTION): Unsets a strategy encoding for a given name by handling a control interest, validating its parameters, removing the strategy from the FIB strategy table, and replying with a 200 OK response.
