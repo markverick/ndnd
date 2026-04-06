@@ -5,7 +5,7 @@
  * The BIFT maps each bit position to a next-hop face and forwarding bit mask.
  */
 
-package fw
+package bier
 
 import (
 	"sort"

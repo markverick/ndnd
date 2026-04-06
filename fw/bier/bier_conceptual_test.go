@@ -1,4 +1,4 @@
-package bier_tests
+package bier_test
 
 // Tests for BIER forwarding in NDN: Sync Interest multicast delivery,
 // prefix-to-routing mapping, BFIR encoding, and BFR/BFER per-hop handling.
@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"testing"
 
-	fw "github.com/named-data/ndnd/fw/fw"
+	bier "github.com/named-data/ndnd/fw/bier"
 	enc "github.com/named-data/ndnd/std/encoding"
 )
 
@@ -76,7 +76,7 @@ func TestSyncInterestStatelessForwarding(t *testing.T) {
 	t.Run("Same Sync Interest sent twice produces identical results", func(t *testing.T) {
 		bs := g.buildBitstring(1, 3, 4)
 		res1 := g.simulate(0, bs)
-		res2 := g.simulate(0, fw.BierClone(bs))
+		res2 := g.simulate(0, bier.BierClone(bs))
 
 		// Both runs must deliver to exactly the same set
 		for id := range res1.delivered {
@@ -98,7 +98,7 @@ func TestPrefixToRoutingMapping(t *testing.T) {
 	// list that BuildBierBitString transforms into a BIER bit-string.
 
 	t.Run("Group members map to correct bit positions", func(t *testing.T) {
-		bift := &fw.BiftState{}
+		bift := &bier.BiftState{}
 
 		// Mapping protocol populates router-to-BFR-ID assignments
 		// (In production this comes from DV advertisements)
@@ -119,22 +119,22 @@ func TestPrefixToRoutingMapping(t *testing.T) {
 		bs := bift.BuildBierBitString(egressRouters)
 
 		// Verify: bits 0, 2, 3 set (routerA, routerC, routerD)
-		if !fw.BierGetBit(bs, 0) {
+		if !bier.BierGetBit(bs, 0) {
 			t.Error("routerA (bit 0) should be set")
 		}
-		if fw.BierGetBit(bs, 1) {
+		if bier.BierGetBit(bs, 1) {
 			t.Error("routerB (bit 1) should NOT be set — not in egress list")
 		}
-		if !fw.BierGetBit(bs, 2) {
+		if !bier.BierGetBit(bs, 2) {
 			t.Error("routerC (bit 2) should be set")
 		}
-		if !fw.BierGetBit(bs, 3) {
+		if !bier.BierGetBit(bs, 3) {
 			t.Error("routerD (bit 3) should be set")
 		}
 	})
 
 	t.Run("Unknown routers in egress list are safely ignored", func(t *testing.T) {
-		bift := &fw.BiftState{}
+		bift := &bier.BiftState{}
 
 		known := enc.Name{enc.NewGenericComponent("known-router")}
 		unknown := enc.Name{enc.NewGenericComponent("unknown-router")}
@@ -146,24 +146,24 @@ func TestPrefixToRoutingMapping(t *testing.T) {
 		bs := bift.BuildBierBitString(egressRouters)
 
 		// Only the known router should appear in the bit-string
-		if !fw.BierGetBit(bs, 5) {
+		if !bier.BierGetBit(bs, 5) {
 			t.Error("known router (bit 5) should be set")
 		}
 		// Bit-string should be minimal — no stray bits
 		for i := 0; i < 5; i++ {
-			if fw.BierGetBit(bs, i) {
+			if bier.BierGetBit(bs, i) {
 				t.Errorf("bit %d should not be set", i)
 			}
 		}
 	})
 
 	t.Run("Single egress router produces single-bit string", func(t *testing.T) {
-		bift := &fw.BiftState{}
+		bift := &bier.BiftState{}
 		r := enc.Name{enc.NewGenericComponent("solo")}
 		bift.RegisterRouter(r, 7)
 
 		bs := bift.BuildBierBitString([]enc.Name{r})
-		if !fw.BierGetBit(bs, 7) {
+		if !bier.BierGetBit(bs, 7) {
 			t.Error("single-router bit-string should have bit 7 set")
 		}
 		// All other bits must be clear
@@ -183,7 +183,7 @@ func TestPrefixToRoutingMapping(t *testing.T) {
 	t.Run("Producer multihoming — producer reachable via multiple egress routers", func(t *testing.T) {
 		// A producer announces the same prefix to two different routers.
 		// The mapping protocol creates egress entries for both.
-		bift := &fw.BiftState{}
+		bift := &bier.BiftState{}
 
 		router1 := enc.Name{enc.NewGenericComponent("edge-1")}
 		router2 := enc.Name{enc.NewGenericComponent("edge-2")}
@@ -197,13 +197,13 @@ func TestPrefixToRoutingMapping(t *testing.T) {
 		egressRouters := []enc.Name{router1, router2}
 		bs := bift.BuildBierBitString(egressRouters)
 
-		if !fw.BierGetBit(bs, 0) {
+		if !bier.BierGetBit(bs, 0) {
 			t.Error("multihomed router1 (bit 0) should be set")
 		}
-		if !fw.BierGetBit(bs, 1) {
+		if !bier.BierGetBit(bs, 1) {
 			t.Error("multihomed router2 (bit 1) should be set")
 		}
-		if fw.BierGetBit(bs, 2) {
+		if bier.BierGetBit(bs, 2) {
 			t.Error("router3 (bit 2) should NOT be set — producer not attached there")
 		}
 	})
@@ -229,7 +229,7 @@ func TestBfirEncodingFromEgressRouters(t *testing.T) {
 	})
 
 	t.Run("BFIR encoding preserves per-router bit accuracy", func(t *testing.T) {
-		bift := &fw.BiftState{}
+		bift := &bier.BiftState{}
 
 		// Register routers at specific BFR-IDs (operator-assigned)
 		names := make([]enc.Name, 10)
@@ -246,11 +246,11 @@ func TestBfirEncodingFromEgressRouters(t *testing.T) {
 		expected := map[int]bool{0: true, 3: true, 7: true, 9: true}
 		for i := 0; i < 10; i++ {
 			if expected[i] {
-				if !fw.BierGetBit(bs, i) {
+				if !bier.BierGetBit(bs, i) {
 					t.Errorf("BFIR encoding: bit %d should be set (egress router present)", i)
 				}
 			} else {
-				if fw.BierGetBit(bs, i) {
+				if bier.BierGetBit(bs, i) {
 					t.Errorf("BFIR encoding: bit %d should NOT be set (no egress router)", i)
 				}
 			}
@@ -258,7 +258,7 @@ func TestBfirEncodingFromEgressRouters(t *testing.T) {
 	})
 
 	t.Run("BFIR with no valid egress routers returns nil", func(t *testing.T) {
-		bift := &fw.BiftState{}
+		bift := &bier.BiftState{}
 		// No routers registered — empty mapping
 		bs := bift.BuildBierBitString(nil)
 		if bs != nil {

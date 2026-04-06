@@ -1,9 +1,9 @@
-package bier_tests
+package bier_test
 
 import (
 	"testing"
 
-	fw "github.com/named-data/ndnd/fw/fw"
+	bier "github.com/named-data/ndnd/fw/bier"
 	enc "github.com/named-data/ndnd/std/encoding"
 )
 
@@ -13,26 +13,26 @@ func TestBierBitManipulation(t *testing.T) {
 		var bs []byte
 
 		// Set bits 0, 5, 15
-		bs = fw.BierSetBit(bs, 0)
-		bs = fw.BierSetBit(bs, 5)
-		bs = fw.BierSetBit(bs, 15)
+		bs = bier.BierSetBit(bs, 0)
+		bs = bier.BierSetBit(bs, 5)
+		bs = bier.BierSetBit(bs, 15)
 
 		// Check that bits are set correctly
-		if !fw.BierGetBit(bs, 0) {
+		if !bier.BierGetBit(bs, 0) {
 			t.Error("Bit 0 should be set")
 		}
-		if !fw.BierGetBit(bs, 5) {
+		if !bier.BierGetBit(bs, 5) {
 			t.Error("Bit 5 should be set")
 		}
-		if !fw.BierGetBit(bs, 15) {
+		if !bier.BierGetBit(bs, 15) {
 			t.Error("Bit 15 should be set")
 		}
 
 		// Check that other bits are not set
-		if fw.BierGetBit(bs, 1) {
+		if bier.BierGetBit(bs, 1) {
 			t.Error("Bit 1 should not be set")
 		}
-		if fw.BierGetBit(bs, 7) {
+		if bier.BierGetBit(bs, 7) {
 			t.Error("Bit 7 should not be set")
 		}
 	})
@@ -40,28 +40,28 @@ func TestBierBitManipulation(t *testing.T) {
 	t.Run("ClearBit", func(t *testing.T) {
 		bs := []byte{0xFF, 0xFF} // All bits set in first two bytes
 
-		fw.BierClearBit(bs, 3)
-		fw.BierClearBit(bs, 10)
+		bier.BierClearBit(bs, 3)
+		bier.BierClearBit(bs, 10)
 
-		if fw.BierGetBit(bs, 3) {
+		if bier.BierGetBit(bs, 3) {
 			t.Error("Bit 3 should be cleared")
 		}
-		if fw.BierGetBit(bs, 10) {
+		if bier.BierGetBit(bs, 10) {
 			t.Error("Bit 10 should be cleared")
 		}
-		if !fw.BierGetBit(bs, 2) {
+		if !bier.BierGetBit(bs, 2) {
 			t.Error("Bit 2 should still be set")
 		}
-		if !fw.BierGetBit(bs, 9) {
+		if !bier.BierGetBit(bs, 9) {
 			t.Error("Bit 9 should still be set")
 		}
 	})
 
-	t.Run("fw.BierAnd", func(t *testing.T) {
+	t.Run("bier.BierAnd", func(t *testing.T) {
 		a := []byte{0b11110000, 0b10101010}
 		b := []byte{0b11001100, 0b11110000}
 
-		result := fw.BierAnd(a, b)
+		result := bier.BierAnd(a, b)
 		expected := []byte{0b11000000, 0b10100000}
 
 		if len(result) != len(expected) {
@@ -74,11 +74,11 @@ func TestBierBitManipulation(t *testing.T) {
 		}
 	})
 
-	t.Run("fw.BierAndNot", func(t *testing.T) {
+	t.Run("bier.BierAndNot", func(t *testing.T) {
 		a := []byte{0b11111111, 0b11111111}
 		b := []byte{0b00001111, 0b11110000}
 
-		result := fw.BierAndNot(a, b)
+		result := bier.BierAndNot(a, b)
 		expected := []byte{0b11110000, 0b00001111}
 
 		if len(result) != len(expected) {
@@ -91,21 +91,21 @@ func TestBierBitManipulation(t *testing.T) {
 		}
 	})
 
-	t.Run("fw.BierIsZero", func(t *testing.T) {
+	t.Run("bier.BierIsZero", func(t *testing.T) {
 		zero := []byte{0, 0, 0}
 		nonZero := []byte{0, 0, 1}
 
-		if !fw.BierIsZero(zero) {
+		if !bier.BierIsZero(zero) {
 			t.Error("Zero bitstring should return true")
 		}
-		if fw.BierIsZero(nonZero) {
+		if bier.BierIsZero(nonZero) {
 			t.Error("Non-zero bitstring should return false")
 		}
 	})
 
-	t.Run("fw.BierClone", func(t *testing.T) {
+	t.Run("bier.BierClone", func(t *testing.T) {
 		original := []byte{1, 2, 3, 4}
-		cloned := fw.BierClone(original)
+		cloned := bier.BierClone(original)
 
 		if len(cloned) != len(original) {
 			t.Errorf("Clone length mismatch: got %d, want %d", len(cloned), len(original))
@@ -128,7 +128,7 @@ func TestBierBitManipulation(t *testing.T) {
 
 // TestBiftConstruction tests the BIFT construction and lookup
 func TestBiftConstruction(t *testing.T) {
-	bift := &fw.BiftState{}
+	bift := &bier.BiftState{}
 
 	t.Run("RegisterRouter", func(t *testing.T) {
 		r1 := enc.Name{enc.NewGenericComponent("router1")}
@@ -177,13 +177,13 @@ func TestBiftConstruction(t *testing.T) {
 		bs := bift.BuildBierBitString(egressRouters)
 
 		// Check that bits 0 and 5 are set
-		if !fw.BierGetBit(bs, 0) {
+		if !bier.BierGetBit(bs, 0) {
 			t.Error("Bit 0 (router1) should be set")
 		}
-		if !fw.BierGetBit(bs, 5) {
+		if !bier.BierGetBit(bs, 5) {
 			t.Error("Bit 5 (router3) should be set")
 		}
-		if fw.BierGetBit(bs, 1) {
+		if bier.BierGetBit(bs, 1) {
 			t.Error("Bit 1 (router2) should not be set")
 		}
 	})
@@ -226,13 +226,13 @@ func TestBiftConstruction(t *testing.T) {
 		if face100Fbm == nil {
 			t.Error("Face 100 neighbor entry not found")
 		} else {
-			if !fw.BierGetBit(face100Fbm, 0) {
+			if !bier.BierGetBit(face100Fbm, 0) {
 				t.Error("Face 100 F-BM should have bit 0 set")
 			}
-			if !fw.BierGetBit(face100Fbm, 1) {
+			if !bier.BierGetBit(face100Fbm, 1) {
 				t.Error("Face 100 F-BM should have bit 1 set")
 			}
-			if fw.BierGetBit(face100Fbm, 5) {
+			if bier.BierGetBit(face100Fbm, 5) {
 				t.Error("Face 100 F-BM should not have bit 5 set")
 			}
 		}
@@ -240,10 +240,10 @@ func TestBiftConstruction(t *testing.T) {
 		if face200Fbm == nil {
 			t.Error("Face 200 neighbor entry not found")
 		} else {
-			if !fw.BierGetBit(face200Fbm, 5) {
+			if !bier.BierGetBit(face200Fbm, 5) {
 				t.Error("Face 200 F-BM should have bit 5 set")
 			}
-			if fw.BierGetBit(face200Fbm, 0) {
+			if bier.BierGetBit(face200Fbm, 0) {
 				t.Error("Face 200 F-BM should not have bit 0 set")
 			}
 		}
@@ -258,48 +258,48 @@ func TestBierReplicationMask(t *testing.T) {
 	// Neighbor 3 can reach routers at bits 5, 6
 
 	var fbm1, fbm2, fbm3 []byte
-	fbm1 = fw.BierSetBit(fbm1, 0)
-	fbm1 = fw.BierSetBit(fbm1, 1)
-	fbm1 = fw.BierSetBit(fbm1, 2)
+	fbm1 = bier.BierSetBit(fbm1, 0)
+	fbm1 = bier.BierSetBit(fbm1, 1)
+	fbm1 = bier.BierSetBit(fbm1, 2)
 
-	fbm2 = fw.BierSetBit(fbm2, 3)
-	fbm2 = fw.BierSetBit(fbm2, 4)
+	fbm2 = bier.BierSetBit(fbm2, 3)
+	fbm2 = bier.BierSetBit(fbm2, 4)
 
-	fbm3 = fw.BierSetBit(fbm3, 5)
-	fbm3 = fw.BierSetBit(fbm3, 6)
+	fbm3 = bier.BierSetBit(fbm3, 5)
+	fbm3 = bier.BierSetBit(fbm3, 6)
 
 	// Incoming BIER bit-string has bits 0, 3, 5 set (3 egress routers)
 	var incoming []byte
-	incoming = fw.BierSetBit(incoming, 0)
-	incoming = fw.BierSetBit(incoming, 3)
-	incoming = fw.BierSetBit(incoming, 5)
+	incoming = bier.BierSetBit(incoming, 0)
+	incoming = bier.BierSetBit(incoming, 3)
+	incoming = bier.BierSetBit(incoming, 5)
 
 	// Compute replication masks
-	rep1 := fw.BierAnd(incoming, fbm1)
-	rep2 := fw.BierAnd(incoming, fbm2)
-	rep3 := fw.BierAnd(incoming, fbm3)
+	rep1 := bier.BierAnd(incoming, fbm1)
+	rep2 := bier.BierAnd(incoming, fbm2)
+	rep3 := bier.BierAnd(incoming, fbm3)
 
 	// Neighbor 1 should replicate for bit 0 only
-	if !fw.BierGetBit(rep1, 0) {
+	if !bier.BierGetBit(rep1, 0) {
 		t.Error("Neighbor 1 should replicate for bit 0")
 	}
-	if fw.BierGetBit(rep1, 1) || fw.BierGetBit(rep1, 2) {
+	if bier.BierGetBit(rep1, 1) || bier.BierGetBit(rep1, 2) {
 		t.Error("Neighbor 1 should not replicate for bits 1 or 2")
 	}
 
 	// Neighbor 2 should replicate for bit 3 only
-	if !fw.BierGetBit(rep2, 3) {
+	if !bier.BierGetBit(rep2, 3) {
 		t.Error("Neighbor 2 should replicate for bit 3")
 	}
-	if fw.BierGetBit(rep2, 4) {
+	if bier.BierGetBit(rep2, 4) {
 		t.Error("Neighbor 2 should not replicate for bit 4")
 	}
 
 	// Neighbor 3 should replicate for bit 5 only
-	if !fw.BierGetBit(rep3, 5) {
+	if !bier.BierGetBit(rep3, 5) {
 		t.Error("Neighbor 3 should replicate for bit 5")
 	}
-	if fw.BierGetBit(rep3, 6) {
+	if bier.BierGetBit(rep3, 6) {
 		t.Error("Neighbor 3 should not replicate for bit 6")
 	}
 }

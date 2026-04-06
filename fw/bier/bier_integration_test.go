@@ -1,11 +1,11 @@
-package bier_tests
+package bier_test
 
 import (
 	"sync"
 	"testing"
 
+	bier "github.com/named-data/ndnd/fw/bier"
 	"github.com/named-data/ndnd/fw/core"
-	fw "github.com/named-data/ndnd/fw/fw"
 	"github.com/named-data/ndnd/fw/table"
 	enc "github.com/named-data/ndnd/std/encoding"
 )
@@ -21,31 +21,31 @@ func setBierIndex(idx int) func() {
 
 func TestBierBitManipulationEdgeCases(t *testing.T) {
 	t.Run("GetBit on empty slice returns false", func(t *testing.T) {
-		if fw.BierGetBit(nil, 0) {
+		if bier.BierGetBit(nil, 0) {
 			t.Error("GetBit on nil should be false")
 		}
-		if fw.BierGetBit([]byte{}, 7) {
+		if bier.BierGetBit([]byte{}, 7) {
 			t.Error("GetBit on empty slice should be false")
 		}
 	})
 
 	t.Run("GetBit out-of-bounds returns false", func(t *testing.T) {
 		bs := []byte{0xFF} // only byte 0
-		if fw.BierGetBit(bs, 8) {
+		if bier.BierGetBit(bs, 8) {
 			t.Error("GetBit at byte 1 of 1-byte slice should be false")
 		}
-		if fw.BierGetBit(bs, 100) {
+		if bier.BierGetBit(bs, 100) {
 			t.Error("GetBit far out of bounds should be false")
 		}
 	})
 
 	t.Run("SetBit auto-extends slice", func(t *testing.T) {
 		var bs []byte
-		bs = fw.BierSetBit(bs, 23) // byte index 2
+		bs = bier.BierSetBit(bs, 23) // byte index 2
 		if len(bs) < 3 {
 			t.Errorf("slice should be at least 3 bytes, got %d", len(bs))
 		}
-		if !fw.BierGetBit(bs, 23) {
+		if !bier.BierGetBit(bs, 23) {
 			t.Error("bit 23 should be set")
 		}
 		// Preceding bytes should be zero
@@ -56,7 +56,7 @@ func TestBierBitManipulationEdgeCases(t *testing.T) {
 
 	t.Run("SetBit boundary — bit 7 is MSB of first byte", func(t *testing.T) {
 		var bs []byte
-		bs = fw.BierSetBit(bs, 7)
+		bs = bier.BierSetBit(bs, 7)
 		if bs[0] != 0x80 {
 			t.Errorf("expected 0x80, got %02x", bs[0])
 		}
@@ -64,7 +64,7 @@ func TestBierBitManipulationEdgeCases(t *testing.T) {
 
 	t.Run("SetBit boundary — bit 8 is LSB of second byte", func(t *testing.T) {
 		var bs []byte
-		bs = fw.BierSetBit(bs, 8)
+		bs = bier.BierSetBit(bs, 8)
 		if len(bs) < 2 || bs[1] != 0x01 {
 			t.Errorf("expected second byte 0x01, got %v", bs)
 		}
@@ -72,20 +72,20 @@ func TestBierBitManipulationEdgeCases(t *testing.T) {
 
 	t.Run("ClearBit out-of-bounds is a no-op", func(t *testing.T) {
 		bs := []byte{0xFF}
-		fw.BierClearBit(bs, 100) // should not panic
+		bier.BierClearBit(bs, 100) // should not panic
 		if bs[0] != 0xFF {
 			t.Error("ClearBit out-of-bounds should not modify the slice")
 		}
 	})
 
 	t.Run("ClearBit on nil is a no-op", func(t *testing.T) {
-		fw.BierClearBit(nil, 0) // must not panic
+		bier.BierClearBit(nil, 0) // must not panic
 	})
 
-	t.Run("fw.BierAnd with different length slices", func(t *testing.T) {
+	t.Run("bier.BierAnd with different length slices", func(t *testing.T) {
 		a := []byte{0xFF, 0xFF, 0xFF} // 3 bytes
 		b := []byte{0x0F, 0xF0}       // 2 bytes — shorter
-		res := fw.BierAnd(a, b)
+		res := bier.BierAnd(a, b)
 		if len(res) != 2 {
 			t.Errorf("result length should be min(3,2)=2, got %d", len(res))
 		}
@@ -94,17 +94,17 @@ func TestBierBitManipulationEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("fw.BierAnd both nil/empty returns empty", func(t *testing.T) {
-		res := fw.BierAnd(nil, nil)
+	t.Run("bier.BierAnd both nil/empty returns empty", func(t *testing.T) {
+		res := bier.BierAnd(nil, nil)
 		if len(res) != 0 {
 			t.Errorf("AND of two nils should be empty")
 		}
 	})
 
-	t.Run("fw.BierAndNot shorter mask", func(t *testing.T) {
+	t.Run("bier.BierAndNot shorter mask", func(t *testing.T) {
 		a := []byte{0xFF, 0xFF} // 2 bytes
 		b := []byte{0x0F}       // 1 byte — shorter
-		res := fw.BierAndNot(a, b)
+		res := bier.BierAndNot(a, b)
 		// Only first byte gets bits cleared
 		if res[0] != 0xF0 {
 			t.Errorf("byte 0: expected 0xF0, got %02x", res[0])
@@ -114,26 +114,26 @@ func TestBierBitManipulationEdgeCases(t *testing.T) {
 		}
 	})
 
-	t.Run("fw.BierIsZero on nil is true", func(t *testing.T) {
-		if !fw.BierIsZero(nil) {
+	t.Run("bier.BierIsZero on nil is true", func(t *testing.T) {
+		if !bier.BierIsZero(nil) {
 			t.Error("nil bitstring should be zero")
 		}
 	})
 
-	t.Run("fw.BierIsZero on empty slice is true", func(t *testing.T) {
-		if !fw.BierIsZero([]byte{}) {
+	t.Run("bier.BierIsZero on empty slice is true", func(t *testing.T) {
+		if !bier.BierIsZero([]byte{}) {
 			t.Error("empty bitstring should be zero")
 		}
 	})
 
-	t.Run("fw.BierClone of nil returns nil", func(t *testing.T) {
-		if fw.BierClone(nil) != nil {
+	t.Run("bier.BierClone of nil returns nil", func(t *testing.T) {
+		if bier.BierClone(nil) != nil {
 			t.Error("clone of nil should be nil")
 		}
 	})
 
-	t.Run("fw.BierClone of empty slice returns empty (not nil)", func(t *testing.T) {
-		c := fw.BierClone([]byte{})
+	t.Run("bier.BierClone of empty slice returns empty (not nil)", func(t *testing.T) {
+		c := bier.BierClone([]byte{})
 		if c == nil {
 			t.Error("clone of empty slice should be non-nil")
 		}
@@ -146,41 +146,41 @@ func TestBierBitManipulationEdgeCases(t *testing.T) {
 		var bs []byte
 		positions := []int{0, 63, 64, 127, 255}
 		for _, pos := range positions {
-			bs = fw.BierSetBit(bs, pos)
+			bs = bier.BierSetBit(bs, pos)
 		}
 		for _, pos := range positions {
-			if !fw.BierGetBit(bs, pos) {
+			if !bier.BierGetBit(bs, pos) {
 				t.Errorf("bit %d should be set", pos)
 			}
 		}
 		// Adjacent bits should be clear
-		if fw.BierGetBit(bs, 1) {
+		if bier.BierGetBit(bs, 1) {
 			t.Error("bit 1 should not be set")
 		}
-		if fw.BierGetBit(bs, 62) {
+		if bier.BierGetBit(bs, 62) {
 			t.Error("bit 62 should not be set")
 		}
 	})
 }
 
-// --- fw.IsBierEnabled / fw.CfgBierIndex ---
+// --- bier.IsBierEnabled / bier.CfgBierIndex ---
 
 func TestBierEnabledConfig(t *testing.T) {
 	t.Run("disabled when BierIndex is -1 (default)", func(t *testing.T) {
 		restore := setBierIndex(-1)
 		defer restore()
-		if fw.IsBierEnabled() {
+		if bier.IsBierEnabled() {
 			t.Error("BIER should be disabled when BierIndex=-1")
 		}
-		if fw.CfgBierIndex() != -1 {
-			t.Error("fw.CfgBierIndex should return -1")
+		if bier.CfgBierIndex() != -1 {
+			t.Error("bier.CfgBierIndex should return -1")
 		}
 	})
 
 	t.Run("enabled when BierIndex is 0", func(t *testing.T) {
 		restore := setBierIndex(0)
 		defer restore()
-		if !fw.IsBierEnabled() {
+		if !bier.IsBierEnabled() {
 			t.Error("BIER should be enabled when BierIndex=0")
 		}
 	})
@@ -188,7 +188,7 @@ func TestBierEnabledConfig(t *testing.T) {
 	t.Run("enabled for large index", func(t *testing.T) {
 		restore := setBierIndex(255)
 		defer restore()
-		if !fw.IsBierEnabled() {
+		if !bier.IsBierEnabled() {
 			t.Error("BIER should be enabled when BierIndex=255")
 		}
 	})
@@ -198,7 +198,7 @@ func TestBierEnabledConfig(t *testing.T) {
 
 func TestBiftEdgeCases(t *testing.T) {
 	t.Run("GetNeighborEntries on empty BIFT", func(t *testing.T) {
-		b := &fw.BiftState{}
+		b := &bier.BiftState{}
 		neighbors := b.GetNeighborEntries()
 		if len(neighbors) != 0 {
 			t.Errorf("empty BIFT should have 0 neighbors, got %d", len(neighbors))
@@ -206,7 +206,7 @@ func TestBiftEdgeCases(t *testing.T) {
 	})
 
 	t.Run("GetNeighborEntries skips entries with no next hop", func(t *testing.T) {
-		b := &fw.BiftState{}
+		b := &bier.BiftState{}
 		r := enc.Name{enc.NewGenericComponent("r")}
 		b.RegisterRouter(r, 0)
 		// No UpdateNextHop call — NextHop is 0
@@ -218,7 +218,7 @@ func TestBiftEdgeCases(t *testing.T) {
 	})
 
 	t.Run("GetNeighborEntries skips entries with nil F-BM", func(t *testing.T) {
-		b := &fw.BiftState{}
+		b := &bier.BiftState{}
 		r := enc.Name{enc.NewGenericComponent("r")}
 		b.RegisterRouter(r, 1)
 		b.UpdateNextHop(1, 99)
@@ -231,12 +231,12 @@ func TestBiftEdgeCases(t *testing.T) {
 	})
 
 	t.Run("RebuildFbm on empty BIFT does not panic", func(t *testing.T) {
-		b := &fw.BiftState{}
+		b := &bier.BiftState{}
 		b.RebuildFbm() // must not panic
 	})
 
 	t.Run("BuildBierBitString with empty egress list returns nil", func(t *testing.T) {
-		b := &fw.BiftState{}
+		b := &bier.BiftState{}
 		bs := b.BuildBierBitString(nil)
 		if bs != nil {
 			t.Errorf("empty egress list should return nil, got %v", bs)
@@ -244,7 +244,7 @@ func TestBiftEdgeCases(t *testing.T) {
 	})
 
 	t.Run("BuildBierBitString with all unknown routers returns nil", func(t *testing.T) {
-		b := &fw.BiftState{}
+		b := &bier.BiftState{}
 		unknown := enc.Name{enc.NewGenericComponent("unknown")}
 		bs := b.BuildBierBitString([]enc.Name{unknown})
 		if bs != nil {
@@ -253,7 +253,7 @@ func TestBiftEdgeCases(t *testing.T) {
 	})
 
 	t.Run("RegisterRouter overwrites existing BFR-ID", func(t *testing.T) {
-		b := &fw.BiftState{}
+		b := &bier.BiftState{}
 		r := enc.Name{enc.NewGenericComponent("router")}
 		b.RegisterRouter(r, 3)
 		b.RegisterRouter(r, 7) // re-register same name, different bit
@@ -268,12 +268,12 @@ func TestBiftEdgeCases(t *testing.T) {
 	})
 
 	t.Run("UpdateNextHop on non-existent BFR-ID is a no-op", func(t *testing.T) {
-		b := &fw.BiftState{}
+		b := &bier.BiftState{}
 		b.UpdateNextHop(99, 100) // must not panic
 	})
 
 	t.Run("RebuildFbm groups multiple BFR-IDs per face", func(t *testing.T) {
-		b := &fw.BiftState{}
+		b := &bier.BiftState{}
 		for i := 0; i < 8; i++ {
 			name := enc.Name{enc.NewGenericComponent("r" + string(rune('0'+i)))}
 			b.RegisterRouter(name, i)
@@ -287,7 +287,7 @@ func TestBiftEdgeCases(t *testing.T) {
 		}
 		fbm := neighbors[0].Fbm
 		for i := 0; i < 8; i++ {
-			if !fw.BierGetBit(fbm, i) {
+			if !bier.BierGetBit(fbm, i) {
 				t.Errorf("F-BM for face 555 should have bit %d set", i)
 			}
 		}
@@ -298,7 +298,7 @@ func TestBiftEdgeCases(t *testing.T) {
 		// Use table.Initialize() to set it up with the default config.
 		table.Initialize()
 
-		b := &fw.BiftState{}
+		b := &bier.BiftState{}
 		r := enc.Name{enc.NewGenericComponent("r")}
 		b.RegisterRouter(r, 0)
 		b.BuildFromFib() // FIB empty → no next hops resolved, no panic
@@ -309,7 +309,7 @@ func TestBiftEdgeCases(t *testing.T) {
 // --- Concurrent access ---
 
 func TestBiftConcurrency(t *testing.T) {
-	b := &fw.BiftState{}
+	b := &bier.BiftState{}
 	var wg sync.WaitGroup
 	const goroutines = 20
 
@@ -355,7 +355,7 @@ func TestBiftConcurrency(t *testing.T) {
 }
 
 func TestBiftBuildBierBitStringMixed(t *testing.T) {
-	b := &fw.BiftState{}
+	b := &bier.BiftState{}
 	known := enc.Name{enc.NewGenericComponent("known")}
 	unknown := enc.Name{enc.NewGenericComponent("unknown")}
 
@@ -364,10 +364,10 @@ func TestBiftBuildBierBitStringMixed(t *testing.T) {
 	bs := b.BuildBierBitString(egressRouters)
 
 	// Only bit 3 should be set (unknown skipped)
-	if !fw.BierGetBit(bs, 3) {
+	if !bier.BierGetBit(bs, 3) {
 		t.Error("bit 3 should be set for known router")
 	}
-	if fw.BierGetBit(bs, 0) || fw.BierGetBit(bs, 1) || fw.BierGetBit(bs, 2) {
+	if bier.BierGetBit(bs, 0) || bier.BierGetBit(bs, 1) || bier.BierGetBit(bs, 2) {
 		t.Error("only bit 3 should be set")
 	}
 }
@@ -375,19 +375,19 @@ func TestBiftBuildBierBitStringMixed(t *testing.T) {
 func TestBierAndNotDoesNotModifyInputs(t *testing.T) {
 	a := []byte{0xFF, 0xFF}
 	b := []byte{0x0F, 0xF0}
-	aCopy := fw.BierClone(a)
-	bCopy := fw.BierClone(b)
+	aCopy := bier.BierClone(a)
+	bCopy := bier.BierClone(b)
 
-	fw.BierAndNot(a, b)
+	bier.BierAndNot(a, b)
 
 	for i := range a {
 		if a[i] != aCopy[i] {
-			t.Errorf("fw.BierAndNot mutated a at byte %d", i)
+			t.Errorf("bier.BierAndNot mutated a at byte %d", i)
 		}
 	}
 	for i := range b {
 		if b[i] != bCopy[i] {
-			t.Errorf("fw.BierAndNot mutated b at byte %d", i)
+			t.Errorf("bier.BierAndNot mutated b at byte %d", i)
 		}
 	}
 }
@@ -395,19 +395,19 @@ func TestBierAndNotDoesNotModifyInputs(t *testing.T) {
 func TestBierAndDoesNotModifyInputs(t *testing.T) {
 	a := []byte{0xAA, 0xBB}
 	b := []byte{0xCC, 0xDD}
-	aCopy := fw.BierClone(a)
-	bCopy := fw.BierClone(b)
+	aCopy := bier.BierClone(a)
+	bCopy := bier.BierClone(b)
 
-	fw.BierAnd(a, b)
+	bier.BierAnd(a, b)
 
 	for i := range a {
 		if a[i] != aCopy[i] {
-			t.Errorf("fw.BierAnd mutated a at byte %d", i)
+			t.Errorf("bier.BierAnd mutated a at byte %d", i)
 		}
 	}
 	for i := range b {
 		if b[i] != bCopy[i] {
-			t.Errorf("fw.BierAnd mutated b at byte %d", i)
+			t.Errorf("bier.BierAnd mutated b at byte %d", i)
 		}
 	}
 }

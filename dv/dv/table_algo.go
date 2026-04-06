@@ -3,7 +3,7 @@ package dv
 import (
 	"github.com/named-data/ndnd/dv/config"
 	"github.com/named-data/ndnd/dv/table"
-	fw "github.com/named-data/ndnd/fw/fw"
+	"github.com/named-data/ndnd/fw/bier"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/log"
 )
@@ -138,7 +138,7 @@ func (dv *Router) updateFib() {
 
 	// Rebuild the BIFT whenever the FIB changes so BIER forwarding paths
 	// are always consistent with the routing table.
-	if fw.IsBierEnabled() {
-		fw.Bift.BuildFromFib()
+	if bier.IsBierEnabled() {
+		bier.Bift.BuildFromFib()
 	}
 }

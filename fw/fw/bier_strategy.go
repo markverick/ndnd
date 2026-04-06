@@ -19,6 +19,7 @@
 package fw
 
 import (
+	"github.com/named-data/ndnd/fw/bier"
 	"github.com/named-data/ndnd/fw/core"
 	"github.com/named-data/ndnd/fw/defn"
 	"github.com/named-data/ndnd/fw/table"
@@ -90,14 +91,14 @@ func (s *BierStrategy) AfterReceiveMulticastInterest(
 ) {
 	if len(packet.Bier) == 0 {
 		core.Log.Trace(s, "BFIR: encoding BIER bit-string", "name", packet.Name, "egress-count", len(petEntry.EgressRouters))
-		packet.Bier = Bift.BuildBierBitString(petEntry.EgressRouters)
+		packet.Bier = bier.Bift.BuildBierBitString(petEntry.EgressRouters)
 	}
 
-	if deliveredToLocal && len(packet.Bier) > 0 && IsBierEnabled() {
-		bs := BierClone(packet.Bier)
-		BierClearBit(bs, CfgBierIndex())
+	if deliveredToLocal && len(packet.Bier) > 0 && bier.IsBierEnabled() {
+		bs := bier.BierClone(packet.Bier)
+		bier.BierClearBit(bs, bier.CfgBierIndex())
 		packet.Bier = bs
-		if BierIsZero(bs) {
+		if bier.BierIsZero(bs) {
 			return
 		}
 	}
@@ -117,32 +118,32 @@ func bierReplicate(
 	inFace uint64,
 	sendInterest func(*defn.Pkt, table.PitEntry, uint64, uint64) bool,
 ) {
-	incomingBs := BierClone(packet.Bier)
+	incomingBs := bier.BierClone(packet.Bier)
 
 	// Clear local bit — local delivery was already handled by thread.go.
 	// Also clear it if no local app is registered, to avoid forwarding our
 	// own bit position to downstream neighbors.
-	if IsBierEnabled() {
-		localId := CfgBierIndex()
-		if localId >= 0 && BierGetBit(incomingBs, localId) {
-			BierClearBit(incomingBs, localId)
+	if bier.IsBierEnabled() {
+		localId := bier.CfgBierIndex()
+		if localId >= 0 && bier.BierGetBit(incomingBs, localId) {
+			bier.BierClearBit(incomingBs, localId)
 		}
 	}
 
-	if BierIsZero(incomingBs) {
+	if bier.BierIsZero(incomingBs) {
 		return
 	}
 
 	core.Log.Trace(logCtx, "BIER replication", "name", packet.Name, "bs-len", len(incomingBs))
 
-	neighbors := Bift.GetNeighborEntries()
+	neighbors := bier.Bift.GetNeighborEntries()
 	for _, neighbor := range neighbors {
 		if neighbor.FaceID == inFace {
 			continue // Never send back on incoming face
 		}
 
-		replicationMask := BierAnd(incomingBs, neighbor.Fbm)
-		if BierIsZero(replicationMask) {
+		replicationMask := bier.BierAnd(incomingBs, neighbor.Fbm)
+		if bier.BierIsZero(replicationMask) {
 			continue
 		}
 
@@ -162,8 +163,8 @@ func bierReplicate(
 		sendInterest(clonePkt, pitEntry, neighbor.FaceID, inFace)
 
 		// Loop suppression: clear forwarded bits from working mask
-		incomingBs = BierAndNot(incomingBs, neighbor.Fbm)
-		if BierIsZero(incomingBs) {
+		incomingBs = bier.BierAndNot(incomingBs, neighbor.Fbm)
+		if bier.BierIsZero(incomingBs) {
 			break
 		}
 	}

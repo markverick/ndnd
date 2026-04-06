@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/named-data/ndnd/fw/bier"
 	"github.com/named-data/ndnd/fw/core"
 	"github.com/named-data/ndnd/fw/defn"
 	"github.com/named-data/ndnd/fw/dispatch"
@@ -302,8 +303,8 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	var petEntry table.PetEntry
 	var petFound bool
 	petLookup := false
-	if IsBierEnabled() && len(packet.Bier) > 0 {
-		if BierGetBit(BierClone(packet.Bier), CfgBierIndex()) {
+	if bier.IsBierEnabled() && len(packet.Bier) > 0 {
+		if bier.BierGetBit(bier.BierClone(packet.Bier), bier.CfgBierIndex()) {
 			pipeline = fwMulticastEgress
 		} else {
 			pipeline = fwMulticastTransit
