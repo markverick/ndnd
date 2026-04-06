@@ -35,10 +35,12 @@ func NewStrategyChoiceModule(kind strategyChoiceKind) *StrategyChoiceModule {
 
 // (AI GENERATED DESCRIPTION): Returns the identifier string `"mgmt-strategy"` for the StrategyChoiceModule.
 func (s *StrategyChoiceModule) String() string {
-	if s.kind == strategyChoiceMulticast {
+	switch s.kind {
+	case strategyChoiceMulticast:
 		return "mgmt-multicast-strategy"
+	default:
+		return "mgmt-strategy"
 	}
-	return "mgmt-strategy"
 }
 
 // (AI GENERATED DESCRIPTION): Registers the specified manager by assigning it to the StrategyChoiceModule’s manager field.
@@ -55,11 +57,7 @@ func (s *StrategyChoiceModule) getManager() *Thread {
 func (s *StrategyChoiceModule) handleIncomingInterest(interest *Interest) {
 	// Only allow from /localhost
 	if !LOCAL_PREFIX.IsPrefix(interest.Name()) {
-		if s.kind == strategyChoiceMulticast {
-			core.Log.Warn(s, "Received multicast strategy management Interest from non-local source - DROP")
-		} else {
-			core.Log.Warn(s, "Received strategy management Interest from non-local source - DROP")
-		}
+		core.Log.Warn(s, "Received strategy management Interest from non-local source - DROP")
 		return
 	}
 
