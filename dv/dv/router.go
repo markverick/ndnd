@@ -320,15 +320,14 @@ func (dv *Router) register() (err error) {
 }
 
 func (dv *Router) execMgmtRetry(module, cmd string, args *mgmt.ControlArgs) {
+	var err error
 	for i := 0; ; i++ {
-		if _, err := dv.engine.ExecMgmtCmd(module, cmd, args); err != nil {
-			log.Error(dv, "Forwarder command failed", "err", err, "attempt", i,
-				"module", module, "cmd", cmd, "args", args)
-			time.Sleep(100 * time.Millisecond)
-			continue
+		if _, err = dv.engine.ExecMgmtCmd(module, cmd, args); err == nil {
+			break
 		}
-		time.Sleep(1 * time.Millisecond)
-		break
+		log.Error(dv, "Forwarder command failed", "err", err, "attempt", i,
+			"module", module, "cmd", cmd, "args", args)
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
