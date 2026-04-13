@@ -1,7 +1,6 @@
-/**
- * Broadcast forwarding strategy.
+/* Broadcast Strategy for ndnd
  *
- * Using this strategy, the interest packet will be forwarded to all nexthops.
+ * Implements multicast broadcast forwarding as a proper NDN forwarding strategy.
  */
 
 package fw
@@ -12,34 +11,30 @@ import (
 	"github.com/named-data/ndnd/fw/table"
 )
 
-// The strategy to forward interests to all nexthops.
-type Broadcast struct {
+// BroadcastStrategy implements broadcast multicast forwarding.
+type BroadcastStrategy struct {
 	StrategyBase
 }
 
-// (AI GENERATED DESCRIPTION): Registers the Broadcast strategy with version 1 in the strategy registry by appending its constructor to the init list.
 func init() {
-	strategyInit = append(strategyInit, func() Strategy { return &Broadcast{} })
+	strategyInit = append(strategyInit, func() Strategy { return &BroadcastStrategy{} })
 	StrategyVersions["broadcast"] = []uint64{1}
 }
 
-// (AI GENERATED DESCRIPTION): Initializes the *Broadcast strategy by setting up its base with the name “broadcast” and priority 1 on the provided forwarding thread.
-func (s *Broadcast) Instantiate(fwThread *Thread) {
+func (s *BroadcastStrategy) Instantiate(fwThread *Thread) {
 	s.NewStrategyBase(fwThread, "broadcast", 1)
 }
 
-// (AI GENERATED DESCRIPTION): Sends a cached Data packet (retrieved from the Content Store) back to the requester via the specified PIT entry, using the requesting face and indicating the Content Store as the data source.
-func (s *Broadcast) AfterContentStoreHit(
+func (s *BroadcastStrategy) AfterContentStoreHit(
 	packet *defn.Pkt,
 	pitEntry table.PitEntry,
 	inFace uint64,
 ) {
 	core.Log.Trace(s, "AfterContentStoreHit", "name", packet.Name, "faceid", inFace)
-	s.SendData(packet, pitEntry, inFace, 0) // 0 indicates ContentStore is source
+	s.SendData(packet, pitEntry, inFace, 0)
 }
 
-// (AI GENERATED DESCRIPTION): Forwards a received Data packet to every face recorded in the PIT entry, logging each forwarding step and invoking SendData for each destination.
-func (s *Broadcast) AfterReceiveData(
+func (s *BroadcastStrategy) AfterReceiveData(
 	packet *defn.Pkt,
 	pitEntry table.PitEntry,
 	inFace uint64,
@@ -51,35 +46,67 @@ func (s *Broadcast) AfterReceiveData(
 	}
 }
 
-// Forwards an incoming Interest to all next-hops
-func (s *Broadcast) AfterReceiveInterest(
+func (s *BroadcastStrategy) AfterReceiveInterest(
 	packet *defn.Pkt,
 	pitEntry table.PitEntry,
 	inFace uint64,
 	nexthops []StrategyCandidateHop,
 ) {
-	if len(nexthops) == 0 {
-		core.Log.Debug(s, "No nexthop found - DROP", "name", packet.Name)
-		return
-	}
+	core.Log.Error(s, "BroadcastStrategy does not support AfterReceiveInterest (unicast)",
+		"name", packet.Name,
+		"inFace", inFace,
+		"nexthops", len(nexthops),
+	)
+}
 
-	successfulForward := false
+func (s *BroadcastStrategy) AfterReceiveMulticastInterest(
+	packet *defn.Pkt,
+	pitEntry table.PitEntry,
+	inFace uint64,
+	petEntry table.PetEntry,
+	deliveredToLocal bool,
+) {
+	core.Log.Trace(s, "Broadcast multicast dispatch",
+		"name", packet.Name,
+		"deliveredToLocal", deliveredToLocal,
+		"petEgress", len(petEntry.EgressRouters),
+		"petNextHops", len(petEntry.NextHops),
+	)
 
-	for _, nh := range nexthops {
-		if sent := s.SendInterest(packet, pitEntry, nh.HopEntry.Nexthop, inFace); sent {
-			core.Log.Trace(s, "Forwarded Interest", "name", packet.Name, "faceid", nh.HopEntry.Nexthop)
-			successfulForward = true
-		} else {
-			core.Log.Trace(s, "Error forwarding interest", "name", packet.Name, "faceid", nh.HopEntry.Nexthop)
+	seen := make(map[uint64]bool)
+	sent := 0
+
+	for _, egress := range petEntry.EgressRouters {
+		nextHops := table.FibStrategyTable.FindNextHopsEnc(egress)
+
+		for _, nextHop := range nextHops {
+			faceID := nextHop.Nexthop
+			if _, ok := seen[faceID]; ok {
+				continue
+			}
+			seen[faceID] = true
+
+			if faceID == packet.IncomingFaceID {
+				continue
+			}
+
+			if pitEntry.InRecords()[faceID] != nil {
+				continue
+			}
+
+			if s.SendInterest(packet, pitEntry, faceID, inFace) {
+				sent++
+			}
 		}
 	}
 
-	if !successfulForward {
-		core.Log.Debug(s, "No usable nexthop for Interest - DROP", "name", packet.Name)
+	if sent == 0 {
+		core.Log.Warn(s, "Broadcast multicast had no eligible PET-scoped nexthops",
+			"name", packet.Name,
+			"deliveredToLocal", deliveredToLocal,
+			"petEgress", len(petEntry.EgressRouters),
+		)
 	}
 }
 
-// (AI GENERATED DESCRIPTION): No‑op hook invoked before satisfying an Interest in the Broadcast strategy – it performs no action.
-func (s *Broadcast) BeforeSatisfyInterest(pitEntry table.PitEntry, inFace uint64) {
-	// This does nothing in Broadcast
-}
+func (s *BroadcastStrategy) BeforeSatisfyInterest(pitEntry table.PitEntry, inFace uint64) {}

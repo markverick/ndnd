@@ -19,11 +19,28 @@ import (
 // StrategyChoiceModule is the module that handles Strategy Choice Management.
 type StrategyChoiceModule struct {
 	manager *Thread
+	kind    strategyChoiceKind
+}
+
+type strategyChoiceKind int
+
+const (
+	strategyChoiceUnicast strategyChoiceKind = iota
+	strategyChoiceMulticast
+)
+
+func NewStrategyChoiceModule(kind strategyChoiceKind) *StrategyChoiceModule {
+	return &StrategyChoiceModule{kind: kind}
 }
 
 // (AI GENERATED DESCRIPTION): Returns the identifier string `"mgmt-strategy"` for the StrategyChoiceModule.
 func (s *StrategyChoiceModule) String() string {
-	return "mgmt-strategy"
+	switch s.kind {
+	case strategyChoiceMulticast:
+		return "mgmt-multicast-strategy"
+	default:
+		return "mgmt-strategy"
+	}
 }
 
 // (AI GENERATED DESCRIPTION): Registers the specified manager by assigning it to the StrategyChoiceModule’s manager field.
@@ -131,14 +148,26 @@ func (s *StrategyChoiceModule) set(interest *Interest) {
 		params.Strategy.Name = params.Strategy.Name.
 			Append(enc.NewVersionComponent(strategyVersion))
 	}
-	table.FibStrategyTable.SetStrategyEnc(params.Name, params.Strategy.Name)
+
+	switch s.kind {
+	case strategyChoiceMulticast:
+		table.MulticastStrategyTable.SetStrategyEnc(params.Name, params.Strategy.Name)
+		core.Log.Info(s, "Set multicast strategy", "name", params.Name, "strategy", params.Strategy.Name)
+
+	case strategyChoiceUnicast:
+		table.FibStrategyTable.SetStrategyEnc(params.Name, params.Strategy.Name)
+		core.Log.Info(s, "Set strategy", "name", params.Name, "strategy", params.Strategy.Name)
+
+	default:
+		core.Log.Warn(s, "Unknown strategy choice kind", "kind", s.kind)
+		s.manager.sendCtrlResp(interest, 500, "Internal error", nil)
+		return
+	}
 
 	s.manager.sendCtrlResp(interest, 200, "OK", &mgmt.ControlArgs{
 		Name:     params.Name,
 		Strategy: params.Strategy,
 	})
-
-	core.Log.Info(s, "Set strategy", "name", params.Name, "strategy", params.Strategy.Name)
 }
 
 // (AI GENERATED DESCRIPTION): Unsets a strategy encoding for a given name by handling a control interest, validating its parameters, removing the strategy from the FIB strategy table, and replying with a 200 OK response.
@@ -164,8 +193,18 @@ func (s *StrategyChoiceModule) unset(interest *Interest) {
 		return
 	}
 
-	table.FibStrategyTable.UnSetStrategyEnc(params.Name)
-	core.Log.Info(s, "Unset Strategy", "name", params.Name)
+	switch s.kind {
+	case strategyChoiceMulticast:
+		table.MulticastStrategyTable.UnSetStrategyEnc(params.Name)
+		core.Log.Info(s, "Unset multicast strategy", "name", params.Name)
+	case strategyChoiceUnicast:
+		table.FibStrategyTable.UnSetStrategyEnc(params.Name)
+		core.Log.Info(s, "Unset Strategy", "name", params.Name)
+	default:
+		core.Log.Warn(s, "Unknown strategy choice kind", "kind", s.kind)
+		s.manager.sendCtrlResp(interest, 500, "Internal error", nil)
+		return
+	}
 
 	s.manager.sendCtrlResp(interest, 200, "OK", &mgmt.ControlArgs{Name: params.Name})
 }
@@ -179,7 +218,24 @@ func (s *StrategyChoiceModule) list(interest *Interest) {
 
 	// Generate new dataset
 	// TODO: For thread safety, we should lock the Strategy table from writes until we are done
-	entries := table.FibStrategyTable.GetAllForwardingStrategies()
+	var entries []table.FibStrategyEntry
+	name := LOCAL_PREFIX.Append(
+		enc.NewGenericComponent("strategy-choice"),
+		enc.NewGenericComponent("list"),
+	)
+	switch s.kind {
+	case strategyChoiceMulticast:
+		entries = table.MulticastStrategyTable.GetAllForwardingStrategies()
+		name = LOCAL_PREFIX.Append(
+			enc.NewGenericComponent("multicast-strategy-choice"),
+			enc.NewGenericComponent("list"),
+		)
+	case strategyChoiceUnicast:
+		entries = table.FibStrategyTable.GetAllForwardingStrategies()
+	default:
+		core.Log.Warn(s, "Unknown strategy choice kind", "kind", s.kind)
+		return
+	}
 	choices := []*mgmt.StrategyChoice{}
 	for _, fsEntry := range entries {
 		choices = append(choices, &mgmt.StrategyChoice{
@@ -189,9 +245,5 @@ func (s *StrategyChoiceModule) list(interest *Interest) {
 	}
 	dataset := &mgmt.StrategyChoiceMsg{StrategyChoices: choices}
 
-	name := LOCAL_PREFIX.Append(
-		enc.NewGenericComponent("strategy-choice"),
-		enc.NewGenericComponent("list"),
-	)
 	s.manager.sendStatusDataset(interest, name, dataset.Encode())
 }

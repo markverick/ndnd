@@ -53,7 +53,7 @@ def is_converged(nodes: list[Node], network=DEFAULT_NETWORK, use_nfdc=False) -> 
             # We don't support that.
             routes = node.cmd('nfdc route list')
         else:
-            routes = node.cmd('ndnd fw route-list')
+            routes = node.cmd('ndnd fw route-list 2>&1')
         for other in nodes:
             if other == node:
                 continue

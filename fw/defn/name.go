@@ -15,5 +15,13 @@ var BEST_ROUTE_STRATEGY = STRATEGY_PREFIX.
 	Append(enc.NewGenericComponent("best-route")).
 	Append(enc.NewVersionComponent(1))
 
+var BROADCAST_STRATEGY = STRATEGY_PREFIX.
+	Append(enc.NewGenericComponent("broadcast")).
+	Append(enc.NewVersionComponent(1))
+
+var BIER_STRATEGY = STRATEGY_PREFIX.
+	Append(enc.NewGenericComponent("bier")).
+	Append(enc.NewVersionComponent(1))
+
 // Default forwarding strategy name
 var DEFAULT_STRATEGY = BEST_ROUTE_STRATEGY

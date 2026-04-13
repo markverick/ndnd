@@ -1158,8 +1158,6 @@ func ParseBlobFetch(reader enc.WireView, ignoreCritical bool) (*BlobFetch, error
 type SecurityConfigObjectEncoder struct {
 	Length uint
 
-	Schema_encoder struct {
-	}
 	Anchors_subencoder []struct {
 	}
 }
@@ -1168,14 +1166,7 @@ type SecurityConfigObjectParsingContext struct {
 }
 
 func (encoder *SecurityConfigObjectEncoder) Init(value *SecurityConfigObject) {
-	{
-		encoder := &encoder.Schema_encoder
-		value := struct {
-		}{}
 
-		_ = encoder
-		_ = value
-	}
 	{
 		Anchors_l := len(value.Anchors)
 		encoder.Anchors_subencoder = make([]struct {
@@ -1198,22 +1189,10 @@ func (encoder *SecurityConfigObjectEncoder) Init(value *SecurityConfigObject) {
 	}
 
 	l := uint(0)
-	{
-		encoder := &encoder.Schema_encoder
-		value := struct {
-			Schema []byte
-		}{
-			Schema: value.Schema,
-		}
-		{
-			if value.Schema != nil {
-				l += 3
-				l += uint(enc.TLNum(len(value.Schema)).EncodingLength())
-				l += uint(len(value.Schema))
-			}
-			_ = encoder
-			_ = value
-		}
+	if value.Schema != nil {
+		l += 3
+		l += uint(enc.TLNum(len(value.Schema)).EncodingLength())
+		l += uint(len(value.Schema))
 	}
 	if value.Anchors != nil {
 		for seq_i, seq_v := range value.Anchors {
@@ -1248,25 +1227,13 @@ func (encoder *SecurityConfigObjectEncoder) EncodeInto(value *SecurityConfigObje
 
 	pos := uint(0)
 
-	{
-		encoder := &encoder.Schema_encoder
-		value := struct {
-			Schema []byte
-		}{
-			Schema: value.Schema,
-		}
-		{
-			if value.Schema != nil {
-				buf[pos] = 253
-				binary.BigEndian.PutUint16(buf[pos+1:], uint16(421))
-				pos += 3
-				pos += uint(enc.TLNum(len(value.Schema)).EncodeInto(buf[pos:]))
-				copy(buf[pos:], value.Schema)
-				pos += uint(len(value.Schema))
-			}
-			_ = encoder
-			_ = value
-		}
+	if value.Schema != nil {
+		buf[pos] = 253
+		binary.BigEndian.PutUint16(buf[pos+1:], uint16(421))
+		pos += 3
+		pos += uint(enc.TLNum(len(value.Schema)).EncodeInto(buf[pos:]))
+		copy(buf[pos:], value.Schema)
+		pos += uint(len(value.Schema))
 	}
 	if value.Anchors != nil {
 		for seq_i, seq_v := range value.Anchors {
@@ -1384,7 +1351,7 @@ func (context *SecurityConfigObjectParsingContext) Parse(reader enc.WireView, ig
 		value.Schema = nil
 	}
 	if !handled_Anchors && err == nil {
-		value.Anchors = nil
+		// sequence - skip
 	}
 
 	if err != nil {

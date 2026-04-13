@@ -1,296 +1,177 @@
-/* BIER - Bit Index Explicit Replication for ndnd
+/* BIER Strategy for ndnd
  *
- * Stateless multicast forwarding using bit-indexed replication.
- * Each router is assigned a unique BFR-ID (bit index) by the operator.
- * The BIFT maps each bit position to a next-hop face and forwarding bit mask.
+ * Implements BIER (Bit Index Explicit Replication) multicast forwarding
+ * as a proper NDN forwarding strategy, working in tandem with the PIT.
+ *
+ * Roles:
+ *   BFIR: thread.go detects multiple egress routers, pre-encodes bit-string,
+ *         then calls this strategy. Strategy replicates to BIFT neighbors via
+ *         SendInterest (creating PIT out-records for tracked Data return).
+ *
+ *   BFR:  Transit router receives Interest with BIER header. Goes through full
+ *         PIT pipeline (no bypass). Strategy replicates to neighbors via BIFT
+ *         F-BM AND operations, using SendInterest for PIT tracking.
+ *
+ *   BFER: Local bit is set. thread.go delivers to local app via allowedLocalNexthops
+ *         (PET-based). Strategy clears local bit then replicates remaining bits.
  */
 
 package fw
 
 import (
-	"sort"
-	"sync"
-
+	"github.com/named-data/ndnd/fw/bier"
 	"github.com/named-data/ndnd/fw/core"
+	"github.com/named-data/ndnd/fw/defn"
 	"github.com/named-data/ndnd/fw/table"
 	enc "github.com/named-data/ndnd/std/encoding"
+	ndnlog "github.com/named-data/ndnd/std/log"
 )
 
-// BiftEntry represents a single entry in the Bit Index Forwarding Table.
-// Each entry maps a BFR-ID (bit position) to a next-hop face and
-// the forwarding bit mask (F-BM) for that neighbor.
-type BiftEntry struct {
-	BfrId      int      // Bit position this entry is for
-	RouterName enc.Name // Name of the destination router
-	NextHop    uint64   // Face ID to reach this router's next hop
-	Fbm        []byte   // Forwarding Bit Mask for this neighbor
+// BierStrategyName is the canonical name of the BIER strategy.
+// Exported so thread.go can use it for auto-override when packet.Bier is set.
+var BierStrategyName enc.Name
+
+// BierStrategy implements BIER multicast forwarding via the NDN strategy interface.
+// It works in tandem with the PIT: replication uses SendInterest (PIT out-records)
+// rather than raw face sends, enabling Data return path tracking and loop suppression.
+type BierStrategy struct {
+	StrategyBase
 }
 
-// Bift is the global Bit Index Forwarding Table.
-var Bift = &BiftState{}
-
-// BiftState holds the current BIFT and mapping state.
-type BiftState struct {
-	mu      sync.RWMutex
-	entries map[int]*BiftEntry // BFR-ID -> entry
-
-	// routerBit maps router name hash -> BFR-ID for quick lookup
-	routerBit map[uint64]int
+func init() {
+	strategyInit = append(strategyInit, func() Strategy { return &BierStrategy{} })
+	StrategyVersions["bier"] = []uint64{1}
 }
 
-func (b *BiftState) String() string {
-	return "bift"
+func (s *BierStrategy) Instantiate(fwThread *Thread) {
+	s.NewStrategyBase(fwThread, "bier", 1)
+	BierStrategyName = s.GetName()
 }
 
-// CfgBierIndex returns the configured BIER index for this router.
-// Returns -1 if BIER is not configured (disabled).
-func CfgBierIndex() int {
-	return core.C.Fw.BierIndex
+func (s *BierStrategy) AfterContentStoreHit(
+	packet *defn.Pkt,
+	pitEntry table.PitEntry,
+	inFace uint64,
+) {
+	core.Log.Trace(s, "AfterContentStoreHit", "name", packet.Name, "faceid", inFace)
+	s.SendData(packet, pitEntry, inFace, 0)
 }
 
-// IsBierEnabled returns true if BIER forwarding is enabled on this router.
-func IsBierEnabled() bool {
-	return CfgBierIndex() >= 0
-}
-
-// --- Bit-string manipulation helpers ---
-
-// BierGetBit returns true if bit position pos is set in the bitstring.
-// Bit 0 is the LSB of the first byte.
-func BierGetBit(bs []byte, pos int) bool {
-	byteIdx := pos / 8
-	if byteIdx >= len(bs) {
-		return false
+func (s *BierStrategy) AfterReceiveData(
+	packet *defn.Pkt,
+	pitEntry table.PitEntry,
+	inFace uint64,
+) {
+	core.Log.Trace(s, "AfterReceiveData", "name", packet.Name, "inrecords", len(pitEntry.InRecords()))
+	for faceID := range pitEntry.InRecords() {
+		core.Log.Trace(s, "Forwarding Data", "name", packet.Name, "faceid", faceID)
+		s.SendData(packet, pitEntry, faceID, inFace)
 	}
-	bitIdx := uint(pos % 8)
-	return (bs[byteIdx] & (1 << bitIdx)) != 0
 }
 
-// BierSetBit sets bit position pos in the bitstring.
-// Grows the slice if needed.
-func BierSetBit(bs []byte, pos int) []byte {
-	byteIdx := pos / 8
-	for byteIdx >= len(bs) {
-		bs = append(bs, 0)
+func (s *BierStrategy) AfterReceiveInterest(
+	packet *defn.Pkt,
+	pitEntry table.PitEntry,
+	inFace uint64,
+	nexthops []StrategyCandidateHop,
+) {
+	core.Log.Error(s, "BierStrategy does not support AfterReceiveInterest (unicast)",
+		"name", packet.Name,
+		"inFace", inFace,
+		"nexthops", len(nexthops),
+	)
+}
+
+func (s *BierStrategy) AfterReceiveMulticastInterest(
+	packet *defn.Pkt,
+	pitEntry table.PitEntry,
+	inFace uint64,
+	petEntry table.PetEntry,
+	deliveredToLocal bool,
+) {
+	if len(packet.Bier) == 0 {
+		core.Log.Trace(s, "BFIR: encoding BIER bit-string", "name", packet.Name, "egress-count", len(petEntry.EgressRouters))
+		packet.Bier = bier.Bift.BuildBierBitString(petEntry.EgressRouters)
 	}
-	bitIdx := uint(pos % 8)
-	bs[byteIdx] |= (1 << bitIdx)
-	return bs
+
+	if deliveredToLocal && len(packet.Bier) > 0 && bier.IsBierEnabled() {
+		bs := bier.BierClone(packet.Bier)
+		bier.BierClearBit(bs, bier.CfgBierIndex())
+		packet.Bier = bs
+		if bier.BierIsZero(bs) {
+			return
+		}
+	}
+
+	s.replicateBier(packet, pitEntry, inFace)
 }
 
-// BierClearBit clears bit position pos in the bitstring.
-func BierClearBit(bs []byte, pos int) {
-	byteIdx := pos / 8
-	if byteIdx >= len(bs) {
+// bierReplicate performs BIFT-based BIER replication through the PIT.
+// Local bit is cleared first (local delivery already done by thread.go's
+// allowedLocalNexthops block). Remaining bits are replicated to BIFT
+// neighbors using sendInterest, which creates PIT out-records.
+// Shared by BierStrategy and Multicast so both strategies are BIER-aware.
+func bierReplicate(
+	logCtx ndnlog.Tag,
+	packet *defn.Pkt,
+	pitEntry table.PitEntry,
+	inFace uint64,
+	sendInterest func(*defn.Pkt, table.PitEntry, uint64, uint64) bool,
+) {
+	incomingBs := bier.BierClone(packet.Bier)
+
+	// Clear local bit — local delivery was already handled by thread.go.
+	// Also clear it if no local app is registered, to avoid forwarding our
+	// own bit position to downstream neighbors.
+	if bier.IsBierEnabled() {
+		localId := bier.CfgBierIndex()
+		if localId >= 0 && bier.BierGetBit(incomingBs, localId) {
+			bier.BierClearBit(incomingBs, localId)
+		}
+	}
+
+	if bier.BierIsZero(incomingBs) {
 		return
 	}
-	bitIdx := uint(pos % 8)
-	bs[byteIdx] &^= (1 << bitIdx)
-}
 
-// BierAnd returns bitwise AND of two bitstrings. Result length = min(len(a), len(b)).
-func BierAnd(a, b []byte) []byte {
-	minLen := len(a)
-	if len(b) < minLen {
-		minLen = len(b)
-	}
-	result := make([]byte, minLen)
-	for i := 0; i < minLen; i++ {
-		result[i] = a[i] & b[i]
-	}
-	return result
-}
+	core.Log.Trace(logCtx, "BIER replication", "name", packet.Name, "bs-len", len(incomingBs))
 
-// BierAndNot returns a &^ b (a AND NOT b). Clears bits in a that are set in b.
-func BierAndNot(a, b []byte) []byte {
-	result := make([]byte, len(a))
-	copy(result, a)
-	minLen := len(a)
-	if len(b) < minLen {
-		minLen = len(b)
-	}
-	for i := 0; i < minLen; i++ {
-		result[i] = a[i] &^ b[i]
-	}
-	return result
-}
-
-// BierIsZero returns true if all bits in the bitstring are zero.
-func BierIsZero(bs []byte) bool {
-	for _, b := range bs {
-		if b != 0 {
-			return false
+	neighbors := bier.Bift.GetNeighborEntries()
+	for _, neighbor := range neighbors {
+		if neighbor.FaceID == inFace {
+			continue // Never send back on incoming face
 		}
-	}
-	return true
-}
 
-// BierClone returns a copy of the bitstring.
-func BierClone(bs []byte) []byte {
-	if bs == nil {
-		return nil
-	}
-	c := make([]byte, len(bs))
-	copy(c, bs)
-	return c
-}
-
-// --- BIFT Construction ---
-
-// RegisterBierRouter registers a router name with its operator-assigned BFR-ID.
-// This is called when learning about a router's BIER index (e.g., from DV).
-func (b *BiftState) RegisterRouter(routerName enc.Name, bfrId int) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if b.entries == nil {
-		b.entries = make(map[int]*BiftEntry)
-		b.routerBit = make(map[uint64]int)
-	}
-
-	b.entries[bfrId] = &BiftEntry{
-		BfrId:      bfrId,
-		RouterName: routerName.Clone(),
-	}
-	b.routerBit[routerName.Hash()] = bfrId
-
-	core.Log.Info(b, "Registered BIER router", "name", routerName, "bfr-id", bfrId)
-}
-
-// UpdateNextHop updates the next-hop face for reaching a given BFR-ID.
-// Called when FIB changes.
-func (b *BiftState) UpdateNextHop(bfrId int, nextHop uint64) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if entry, ok := b.entries[bfrId]; ok {
-		entry.NextHop = nextHop
-	}
-}
-
-// RebuildFbm rebuilds forwarding bit masks for all BIFT entries.
-// Groups BFR-IDs by their next-hop face and computes the F-BM for each group.
-func (b *BiftState) RebuildFbm() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	// Find maximum BFR-ID to size bitstrings
-	maxBit := 0
-	for bfrId := range b.entries {
-		if bfrId > maxBit {
-			maxBit = bfrId
-		}
-	}
-	bsLen := (maxBit / 8) + 1
-
-	// Group by next-hop face
-	faceGroups := make(map[uint64][]int) // faceID -> list of BFR-IDs
-	for bfrId, entry := range b.entries {
-		if entry.NextHop > 0 {
-			faceGroups[entry.NextHop] = append(faceGroups[entry.NextHop], bfrId)
-		}
-	}
-
-	// Build F-BM for each face group
-	faceFbm := make(map[uint64][]byte)
-	for faceID, bfrIds := range faceGroups {
-		fbm := make([]byte, bsLen)
-		for _, id := range bfrIds {
-			fbm = BierSetBit(fbm, id)
-		}
-		faceFbm[faceID] = fbm
-	}
-
-	// Assign F-BM to each entry based on its next-hop face
-	for _, entry := range b.entries {
-		if fbm, ok := faceFbm[entry.NextHop]; ok {
-			entry.Fbm = fbm
-		}
-	}
-
-	core.Log.Info(b, "Rebuilt BIFT forwarding bit masks",
-		"entries", len(b.entries), "faces", len(faceGroups))
-}
-
-// BuildFromFib rebuilds the BIFT from the current FIB state.
-// For each known router (registered via DV), looks up the FIB to find next hops.
-func (b *BiftState) BuildFromFib() {
-	b.mu.RLock()
-	entries := make(map[int]*BiftEntry, len(b.entries))
-	for k, v := range b.entries {
-		entries[k] = v
-	}
-	b.mu.RUnlock()
-
-	// Update next hops from FIB for each registered router
-	for _, entry := range entries {
-		nexthops := table.FibStrategyTable.FindNextHopsEnc(entry.RouterName)
-		if len(nexthops) > 0 {
-			// Sort by cost and pick best
-			sort.Slice(nexthops, func(i, j int) bool {
-				return nexthops[i].Cost < nexthops[j].Cost
-			})
-			b.UpdateNextHop(entry.BfrId, nexthops[0].Nexthop)
-		}
-	}
-
-	b.RebuildFbm()
-}
-
-// GetRouterBfrId returns the BFR-ID for a given router name.
-func (b *BiftState) GetRouterBfrId(routerName enc.Name) (int, bool) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	if id, ok := b.routerBit[routerName.Hash()]; ok {
-		return id, true
-	}
-	return -1, false
-}
-
-// --- BFIR Functions ---
-
-// BuildBierBitString builds a BIER bit-string from a list of egress router names.
-// Returns nil if no egress routers have known BFR-IDs.
-func (b *BiftState) BuildBierBitString(egressRouters []enc.Name) []byte {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	var bs []byte
-	for _, er := range egressRouters {
-		if id, ok := b.routerBit[er.Hash()]; ok {
-			bs = BierSetBit(bs, id)
-		}
-	}
-	return bs
-}
-
-// --- Replication (BFR/BFER) ---
-
-// BiftNeighborEntry represents a unique next-hop face and its aggregated F-BM.
-type BiftNeighborEntry struct {
-	FaceID uint64
-	Fbm    []byte
-}
-
-// GetNeighborEntries returns the unique neighbor entries (grouped by face) from the BIFT.
-func (b *BiftState) GetNeighborEntries() []BiftNeighborEntry {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-
-	faceMap := make(map[uint64][]byte)
-	for _, entry := range b.entries {
-		if entry.NextHop == 0 || entry.Fbm == nil {
+		replicationMask := bier.BierAnd(incomingBs, neighbor.Fbm)
+		if bier.BierIsZero(replicationMask) {
 			continue
 		}
-		if _, ok := faceMap[entry.NextHop]; !ok {
-			faceMap[entry.NextHop] = BierClone(entry.Fbm)
+
+		// Clone packet with per-neighbor replication mask
+		clonePkt := &defn.Pkt{
+			Name:           packet.Name,
+			L3:             packet.L3,
+			Raw:            packet.Raw,
+			IncomingFaceID: packet.IncomingFaceID,
+			CongestionMark: packet.CongestionMark,
+			Bier:           replicationMask,
+		}
+
+		core.Log.Trace(logCtx, "BIER: replicating to neighbor", "name", packet.Name, "faceid", neighbor.FaceID)
+
+		// KEY: SendInterest creates PIT out-record — Data return path is tracked
+		sendInterest(clonePkt, pitEntry, neighbor.FaceID, inFace)
+
+		// Loop suppression: clear forwarded bits from working mask
+		incomingBs = bier.BierAndNot(incomingBs, neighbor.Fbm)
+		if bier.BierIsZero(incomingBs) {
+			break
 		}
 	}
-
-	neighbors := make([]BiftNeighborEntry, 0, len(faceMap))
-	for faceID, fbm := range faceMap {
-		neighbors = append(neighbors, BiftNeighborEntry{FaceID: faceID, Fbm: fbm})
-	}
-	return neighbors
 }
+
+func (s *BierStrategy) replicateBier(packet *defn.Pkt, pitEntry table.PitEntry, inFace uint64) {
+	bierReplicate(s, packet, pitEntry, inFace, s.SendInterest)
+}
+
+func (s *BierStrategy) BeforeSatisfyInterest(pitEntry table.PitEntry, inFace uint64) {}

@@ -32,16 +32,29 @@ type FibStrategyTree struct {
 	mutex sync.RWMutex
 }
 
-// (AI GENERATED DESCRIPTION): Initializes the FibStrategyTable with a new FibStrategyTree whose root entry has an empty component, default strategy, and empty name.
-func newFibStrategyTableTree() {
-	FibStrategyTable = new(FibStrategyTree)
-	tree := FibStrategyTable.(*FibStrategyTree)
+// newStrategyTableTree initializes a new strategy table tree whose root entry
+// has an empty component, default strategy, and empty name.
+func newStrategyTableTree(defaultStrategy enc.Name) *FibStrategyTree {
+	tree := new(FibStrategyTree)
 
 	// Root component will be empty
 	tree.root = new(fibStrategyTreeEntry)
 	tree.root.component = enc.Component{}
-	tree.root.strategy = defn.DEFAULT_STRATEGY
+	tree.root.strategy = defaultStrategy
 	tree.root.name = enc.Name{}
+
+	return tree
+}
+
+// (AI GENERATED DESCRIPTION): Initializes the FibStrategyTable with a new FibStrategyTree whose root entry has an empty component, default strategy, and empty name.
+func newFibStrategyTableTree() {
+	FibStrategyTable = newStrategyTableTree(defn.DEFAULT_STRATEGY)
+}
+
+// newMulticastStrategyTableTree initializes the MulticastStrategyTable with
+// a new FibStrategyTree whose root entry has an empty component and default strategy.
+func newMulticastStrategyTableTree(defaultStrategy enc.Name) {
+	MulticastStrategyTable = newStrategyTableTree(defaultStrategy)
 }
 
 // findExactMatchEntry returns the entry corresponding to the exact match of

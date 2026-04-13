@@ -50,21 +50,34 @@ type FibStrategyHashTable struct {
 	fibStrategyRWMutex sync.RWMutex
 }
 
-// newFibStrategyTableHashTable creates a new FIB with the hash table algorithm.
+// newStrategyTableHashTable creates a new strategy table with the hash table algorithm.
 // The argument m determines the virtual name length.
-func newFibStrategyTableHashTable(m uint16) {
-	FibStrategyTable = new(FibStrategyHashTable)
-	fibStrategyTableHashTable := FibStrategyTable.(*FibStrategyHashTable)
+func newStrategyTableHashTable(m uint16, defaultStrategy enc.Name) *FibStrategyHashTable {
+	table := new(FibStrategyHashTable)
 
-	fibStrategyTableHashTable.m = int(m) // Cast to int so that it's easy to pass to name.Prefix
-	fibStrategyTableHashTable.realTable = make(map[uint64]*baseFibStrategyEntry)
-	fibStrategyTableHashTable.virtTable = make(map[uint64]*virtualDetails)
-	fibStrategyTableHashTable.virtTableNames = make(map[uint64]map[string]int)
+	table.m = int(m) // Cast to int so that it's easy to pass to name.Prefix
+	table.realTable = make(map[uint64]*baseFibStrategyEntry)
+	table.virtTable = make(map[uint64]*virtualDetails)
+	table.virtTableNames = make(map[uint64]map[string]int)
 
 	rtEntry := new(baseFibStrategyEntry)
 	rtEntry.name = enc.Name{}
-	rtEntry.strategy = defn.DEFAULT_STRATEGY
-	fibStrategyTableHashTable.realTable[enc.Name{}.Hash()] = rtEntry
+	rtEntry.strategy = defaultStrategy
+	table.realTable[enc.Name{}.Hash()] = rtEntry
+
+	return table
+}
+
+// newFibStrategyTableHashTable creates a new FIB with the hash table algorithm.
+// The argument m determines the virtual name length.
+func newFibStrategyTableHashTable(m uint16) {
+	FibStrategyTable = newStrategyTableHashTable(m, defn.DEFAULT_STRATEGY)
+}
+
+// newMulticastStrategyTableHashTable creates a new multicast strategy table
+// with the hash table algorithm. The argument m determines the virtual name length.
+func newMulticastStrategyTableHashTable(m uint16, defaultStrategy enc.Name) {
+	MulticastStrategyTable = newStrategyTableHashTable(m, defaultStrategy)
 }
 
 // findLongestPrefixMatch returns the entry corresponding to the longest

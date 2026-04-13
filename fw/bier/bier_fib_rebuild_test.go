@@ -1,4 +1,4 @@
-package bier_tests
+package bier_test
 
 // TestBiftRebuildOnFibChange verifies that the BIFT is properly rebuilt when
 // the FIB changes. This tests the hook added in table_algo.go:updateFib().
@@ -12,7 +12,7 @@ package bier_tests
 import (
 	"testing"
 
-	fw "github.com/named-data/ndnd/fw/fw"
+	bier "github.com/named-data/ndnd/fw/bier"
 	"github.com/named-data/ndnd/fw/table"
 	enc "github.com/named-data/ndnd/std/encoding"
 )
@@ -24,7 +24,7 @@ func TestBiftRebuildOnFibChange(t *testing.T) {
 	// Use the global FibStrategyTable (requires initialization).
 	table.Initialize()
 
-	b := &fw.BiftState{}
+	b := &bier.BiftState{}
 
 	rA := enc.Name{enc.NewGenericComponent("routerA")}
 	rB := enc.Name{enc.NewGenericComponent("routerB")}
@@ -96,10 +96,10 @@ func TestBiftRebuildOnFibChange(t *testing.T) {
 		// After the "FIB convergence" above, the bit-string built for routerA
 		// should still result in bit 1 being set (BFR-ID is stable).
 		bs := b.BuildBierBitString([]enc.Name{rA})
-		if !fw.BierGetBit(bs, 1) {
+		if !bier.BierGetBit(bs, 1) {
 			t.Error("bit 1 (routerA BFR-ID) should be set after FIB-driven rebuild")
 		}
-		if fw.BierGetBit(bs, 2) {
+		if bier.BierGetBit(bs, 2) {
 			t.Error("bit 2 (routerB BFR-ID) should NOT be set when only routerA is egress")
 		}
 	})
@@ -111,7 +111,7 @@ func TestBiftRebuildOnFibChange(t *testing.T) {
 func TestBiftBuildFromFibMultipleRebuildsSafe(t *testing.T) {
 	table.Initialize()
 
-	b := &fw.BiftState{}
+	b := &bier.BiftState{}
 	rX := enc.Name{enc.NewGenericComponent("routerX")}
 	b.RegisterRouter(rX, 5)
 	b.UpdateNextHop(5, 77)
@@ -128,7 +128,7 @@ func TestBiftBuildFromFibMultipleRebuildsSafe(t *testing.T) {
 	for _, n := range neighbors {
 		if n.FaceID == 77 {
 			found = true
-			if !fw.BierGetBit(n.Fbm, 5) {
+			if !bier.BierGetBit(n.Fbm, 5) {
 				t.Error("F-BM for face 77 should have bit 5 set after repeated rebuilds")
 			}
 		}

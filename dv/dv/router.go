@@ -8,6 +8,7 @@ import (
 	"github.com/named-data/ndnd/dv/config"
 	"github.com/named-data/ndnd/dv/nfdc"
 	"github.com/named-data/ndnd/dv/table"
+	"github.com/named-data/ndnd/fw/defn"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/log"
 	"github.com/named-data/ndnd/std/ndn"
@@ -285,62 +286,49 @@ func (dv *Router) register() (err error) {
 	}
 
 	for _, prefix := range pfxs {
-		dv.nfdc.Exec(nfdc.NfdMgmtCmd{
-			Module: "pet",
-			Cmd:    "add-nexthop",
-			Args: &mgmt.ControlArgs{
-				Name: prefix,
-			},
-			Retries: -1,
+		dv.execMgmtRetry("pet", "add-nexthop", &mgmt.ControlArgs{
+			Name: prefix,
 		})
 	}
 	// Allow outgoing local-prefix-sync Interests to use two-phase forwarding.
 	// Incoming Interests still terminate locally on the same prefix.
-	dv.nfdc.Exec(nfdc.NfdMgmtCmd{
-		Module: "pet",
-		Cmd:    "add-egress",
-		Args: &mgmt.ControlArgs{
-			Name:   dv.pfx.SyncPrefix(),
-			Egress: &mgmt.EgressRecord{Name: neighborsPrefix.Clone()},
-		},
-		Retries: -1,
+	dv.execMgmtRetry("pet", "add-egress", &mgmt.ControlArgs{
+		Name:      dv.pfx.SyncPrefix(),
+		Egress:    &mgmt.EgressRecord{Name: neighborsPrefix.Clone()},
+		Multicast: true,
 	})
 	// Set Advertisement Sync to localhop neighbors
-	dv.nfdc.Exec(nfdc.NfdMgmtCmd{
-		Module: "pet",
-		Cmd:    "add-egress",
-		Args: &mgmt.ControlArgs{
-			Name:   dv.config.AdvertisementSyncPrefix(),
-			Egress: &mgmt.EgressRecord{Name: neighborsPrefix.Clone()},
-		},
-		Retries: -1,
-	})
-	// Set strategy to broadcast for advertisement sync Interests, so
-	// /localhop/.../DV/ADS traffic fan-outs to all neighbor nexthops.
-	dv.nfdc.Exec(nfdc.NfdMgmtCmd{
-		Module: "strategy-choice",
-		Cmd:    "set",
-		Args: &mgmt.ControlArgs{
-			Name: dv.config.AdvertisementSyncPrefix(),
-			Strategy: &mgmt.Strategy{
-				Name: config.BroadcastStrategy,
-			},
-		},
-		Retries: -1,
-	})
-	dv.nfdc.Exec(nfdc.NfdMgmtCmd{
-		Module: "strategy-choice",
-		Cmd:    "set",
-		Args: &mgmt.ControlArgs{
-			Name: dv.pfx.SyncPrefix(),
-			Strategy: &mgmt.Strategy{
-				Name: config.BroadcastStrategy,
-			},
-		},
-		Retries: -1,
+	dv.execMgmtRetry("pet", "add-egress", &mgmt.ControlArgs{
+		Name:      dv.config.AdvertisementSyncPrefix(),
+		Egress:    &mgmt.EgressRecord{Name: neighborsPrefix.Clone()},
+		Multicast: true,
 	})
 
+	// Force multicast strategy for sync prefixes to broadcast.
+	broadcastPrefixes := []enc.Name{
+		dv.pfx.SyncPrefix(),
+		dv.config.AdvertisementSyncPrefix(),
+	}
+	for _, prefix := range broadcastPrefixes {
+		dv.execMgmtRetry("multicast-strategy-choice", "set", &mgmt.ControlArgs{
+			Name:     prefix,
+			Strategy: &mgmt.Strategy{Name: defn.BROADCAST_STRATEGY},
+		})
+	}
+
 	return nil
+}
+
+func (dv *Router) execMgmtRetry(module, cmd string, args *mgmt.ControlArgs) {
+	var err error
+	for i := 0; ; i++ {
+		if _, err = dv.engine.ExecMgmtCmd(module, cmd, args); err == nil {
+			break
+		}
+		log.Error(dv, "Forwarder command failed", "err", err, "attempt", i,
+			"module", module, "cmd", cmd, "args", args)
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // createFaces creates faces to all neighbors.
@@ -370,15 +358,10 @@ func (dv *Router) createFaces() {
 		dv.mutex.Unlock()
 
 		// Add neighbor to localhop neighbors
-		dv.nfdc.Exec(nfdc.NfdMgmtCmd{
-			Module: "fib",
-			Cmd:    "add-nexthop",
-			Args: &mgmt.ControlArgs{
-				Name:   neighborsPrefix.Clone(),
-				Cost:   optional.Some(uint64(1)),
-				FaceId: optional.Some(faceId),
-			},
-			Retries: 3,
+		dv.execMgmtRetry("fib", "add-nexthop", &mgmt.ControlArgs{
+			Name:   neighborsPrefix.Clone(),
+			Cost:   optional.Some(uint64(1)),
+			FaceId: optional.Some(faceId),
 		})
 	}
 }

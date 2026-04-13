@@ -8,8 +8,8 @@
 package mgmt
 
 import (
+	"github.com/named-data/ndnd/fw/bier"
 	"github.com/named-data/ndnd/fw/core"
-	"github.com/named-data/ndnd/fw/fw"
 	mgmt "github.com/named-data/ndnd/std/ndn/mgmt_2022"
 	"github.com/named-data/ndnd/std/types/optional"
 )
@@ -73,7 +73,7 @@ func (b *BiftModule) registerRouter(interest *Interest) {
 	}
 
 	bfrId := params.Cost.GetOr(0)
-	fw.Bift.RegisterRouter(params.Name, int(bfrId))
+	bier.Bift.RegisterRouter(params.Name, int(bfrId))
 	core.Log.Info(b, "Registered BIFT router", "name", params.Name, "bfrId", bfrId)
 
 	b.manager.sendCtrlResp(interest, 200, "OK", &mgmt.ControlArgs{
@@ -88,7 +88,7 @@ func (b *BiftModule) rebuild(interest *Interest) {
 		return
 	}
 
-	fw.Bift.BuildFromFib()
+	bier.Bift.BuildFromFib()
 	core.Log.Info(b, "Rebuilt BIFT from FIB")
 
 	b.manager.sendCtrlResp(interest, 200, "OK", &mgmt.ControlArgs{})
