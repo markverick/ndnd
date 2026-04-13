@@ -358,15 +358,10 @@ func (dv *Router) createFaces() {
 		dv.mutex.Unlock()
 
 		// Add neighbor to localhop neighbors
-		dv.nfdc.Exec(nfdc.NfdMgmtCmd{
-			Module: "fib",
-			Cmd:    "add-nexthop",
-			Args: &mgmt.ControlArgs{
-				Name:   neighborsPrefix.Clone(),
-				Cost:   optional.Some(uint64(1)),
-				FaceId: optional.Some(faceId),
-			},
-			Retries: 3,
+		dv.execMgmtRetry("fib", "add-nexthop", &mgmt.ControlArgs{
+			Name:   neighborsPrefix.Clone(),
+			Cost:   optional.Some(uint64(1)),
+			FaceId: optional.Some(faceId),
 		})
 	}
 }
