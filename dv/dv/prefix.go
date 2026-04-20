@@ -70,6 +70,7 @@ func NewPrefixModule(
 	goFunc func(func()),
 	nowFunc func() time.Time,
 	afterFunc func(time.Duration, func()) func(),
+	enableFaceEvents bool,
 ) *PrefixModule {
 	var ptable *table.PrefixEgreState
 
@@ -129,6 +130,7 @@ func NewPrefixModule(
 		seenFaces:          make(map[uint64]struct{}),
 		routerName:         config.RouterName(),
 		nowFunc:            nowFunc,
+		enableFaceEvents:   enableFaceEvents,
 	}
 	pfxSvs.SetOnPublisher(pfxModule.onPublisher)
 	if !pfxModule.replicatePes {

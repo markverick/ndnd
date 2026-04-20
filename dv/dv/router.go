@@ -26,6 +26,11 @@ import (
 
 const PrefixSnapThreshold = 50
 
+// bundledDvSchema is the compiled LVS trust schema embedded in the dv/config package.
+// It is captured here at package level to avoid shadowing by the 'config' function
+// parameter inside NewRouter.
+var bundledDvSchema = config.SchemaBytes
+
 // PrefixSyncSuppressionStats returns SVS suppression statistics.
 func (dv *Router) PrefixSyncSuppressionStats() ndn_sync.SuppressStats {
 	if dv.pfx == nil {
@@ -69,6 +74,9 @@ type Router struct {
 	// forwarding table
 	fib *table.Fib
 
+	// The following fields must be set before calling Start() or Init().
+	// Changing them after either method is called has no effect.
+
 	// GoFunc dispatches work asynchronously.
 	// Defaults to "go f()" in production; overridden by sim.
 	GoFunc func(func())
@@ -101,13 +109,17 @@ func NewRouter(config *config.Config, engine ndn.Engine) (*Router, error) {
 	// Create security configuration
 	var trust *sec.TrustConfig = nil
 	if config.KeyChain != nil {
-		// Simulation: use pre-built keychain and trust anchors
+		// Simulation: use the same bundled LVS schema as production so that
+		// Check() enforces the same signing policy and Suggest() selects
+		// the matching identity key from the pre-built keychain.
 		anchors := config.SimTrustAnchors
 		if len(anchors) == 0 {
 			anchors = config.TrustAnchorNames()
 		}
-		schema := trust_schema.NewNullSchema()
-		var err2 error
+		schema, err2 := trust_schema.NewLvsSchema(bundledDvSchema)
+		if err2 != nil {
+			return nil, fmt.Errorf("failed to parse bundled DV trust schema: %w", err2)
+		}
 		trust, err2 = sec.NewTrustConfig(config.KeyChain, schema, anchors)
 		if err2 != nil {
 			return nil, err2
@@ -142,12 +154,15 @@ func NewRouter(config *config.Config, engine ndn.Engine) (*Router, error) {
 	// Prefix insertion security is enabled via schema configured in dv config.
 	var insertionTrust *sec.TrustConfig
 	if config.KeyChain != nil {
-		// Simulation: reuse pre-built keychain for insertion trust
+		// Simulation: same bundled LVS schema for insertion trust, enforcing the same policy.
 		anchors := config.SimTrustAnchors
 		if len(anchors) == 0 {
 			anchors = config.PrefixInsertionTrustAnchorNames()
 		}
-		insertionSchema := trust_schema.NewNullSchema()
+		insertionSchema, err2 := trust_schema.NewLvsSchema(bundledDvSchema)
+		if err2 != nil {
+			return nil, fmt.Errorf("failed to parse bundled DV insertion trust schema: %w", err2)
+		}
 		insertionTrust, err = sec.NewTrustConfig(config.KeyChain, insertionSchema, anchors)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create sim prefix insertion trust config: %w", err)
@@ -219,8 +234,7 @@ func (dv *Router) ensurePrefixModule() {
 		return
 	}
 	dv.pfx = NewPrefixModule(dv.config, dv.client, dv.insertionTrust, dv.nfdc,
-		dv.GoFunc, dv.NowFunc, dv.AfterFunc)
-	dv.pfx.enableFaceEvents = dv.EnableFaceEvents
+		dv.GoFunc, dv.NowFunc, dv.AfterFunc, dv.EnableFaceEvents)
 }
 
 // Start the DV router. Blocks until Stop() is called.

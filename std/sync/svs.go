@@ -716,6 +716,7 @@ type simTicker struct {
 	cancel    func()
 	period    time.Duration
 	afterFunc func(time.Duration, func()) func()
+	stopped   atomic.Bool
 }
 
 func newSimTicker(d time.Duration, afterFunc func(time.Duration, func()) func()) *simTicker {
@@ -730,6 +731,14 @@ func newSimTicker(d time.Duration, afterFunc func(time.Duration, func()) func())
 
 func (t *simTicker) schedule(d time.Duration) {
 	t.cancel = t.afterFunc(d, func() {
+		// Guard against a callback that fires concurrently with Stop().
+		// This can happen with real time.AfterFunc: Stop() may be called
+		// while the callback is already executing (Stop does not wait).
+		// Without this check the callback would reschedule itself, leaking
+		// a timer chain that fires indefinitely.
+		if t.stopped.Load() {
+			return
+		}
 		select {
 		case t.C <- time.Time{}:
 		default:
@@ -739,6 +748,7 @@ func (t *simTicker) schedule(d time.Duration) {
 }
 
 func (t *simTicker) Reset(d time.Duration) {
+	t.stopped.Store(false)
 	if t.cancel != nil {
 		t.cancel()
 	}
@@ -747,6 +757,7 @@ func (t *simTicker) Reset(d time.Duration) {
 }
 
 func (t *simTicker) Stop() {
+	t.stopped.Store(true)
 	if t.cancel != nil {
 		t.cancel()
 		t.cancel = nil
