@@ -105,6 +105,15 @@ var Pet = PrefixEgressTable{
 	},
 }
 
+// NewPrefixEgressTable creates a new empty PrefixEgressTable (for per-node sim use).
+func NewPrefixEgressTable() *PrefixEgressTable {
+	return &PrefixEgressTable{
+		root: petNode{
+			children: make(map[uint64]*petNode),
+		},
+	}
+}
+
 func (p *PrefixEgressTable) String() string {
 	return "pet"
 }

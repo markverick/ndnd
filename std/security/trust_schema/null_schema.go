@@ -20,6 +20,13 @@ func (*NullSchema) Check(pkt enc.Name, cert enc.Name) bool {
 }
 
 // (AI GENERATED DESCRIPTION): Returns a new SHA‑256 signer, ignoring the provided name and key chain.
-func (*NullSchema) Suggest(enc.Name, ndn.KeyChain) ndn.Signer {
+func (*NullSchema) Suggest(_ enc.Name, keychain ndn.KeyChain) ndn.Signer {
+	if keychain != nil {
+		for _, identity := range keychain.Identities() {
+			for _, key := range identity.Keys() {
+				return signer.AsContextSigner(key.Signer())
+			}
+		}
+	}
 	return signer.NewSha256Signer()
 }

@@ -24,6 +24,11 @@ type RibTable struct {
 	mutex sync.RWMutex
 }
 
+// InitRoot initializes the RIB root entry (for per-node simulation use).
+func (r *RibTable) InitRoot() {
+	r.root.children = make(map[uint64]*RibEntry)
+}
+
 // RibEntry represents an entry in the RIB table.
 type RibEntry struct {
 	Name      enc.Name

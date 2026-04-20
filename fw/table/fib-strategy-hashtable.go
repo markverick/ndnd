@@ -228,9 +228,11 @@ func (f *FibStrategyHashTable) pruneTables(entry *baseFibStrategyEntry) {
 			} else {
 				// Update with length of next longest real prefix associated
 				// with this virtual prefix
+				newMd := 0
 				for _, l := range f.virtTableNames[virtNameHash] {
-					virtEntry.md = max(virtEntry.md, l)
+					newMd = max(newMd, l)
 				}
+				virtEntry.md = newMd
 			}
 		}
 	}
@@ -356,6 +358,26 @@ func (f *FibStrategyHashTable) GetNumFIBEntries() int {
 	defer f.fibStrategyRWMutex.RUnlock()
 
 	return len(f.realTable)
+}
+
+// CleanUpFace removes all nexthop entries for the given face from every entry
+// in the hash table and prunes entries that become empty.
+func (f *FibStrategyHashTable) CleanUpFace(faceID uint64) {
+	f.fibStrategyRWMutex.Lock()
+	defer f.fibStrategyRWMutex.Unlock()
+
+	for _, entry := range f.realTable {
+		for i, nh := range entry.nexthops {
+			if nh.Nexthop == faceID {
+				if i < len(entry.nexthops)-1 {
+					copy(entry.nexthops[i:], entry.nexthops[i+1:])
+				}
+				entry.nexthops = entry.nexthops[:len(entry.nexthops)-1]
+				f.pruneTables(entry)
+				break
+			}
+		}
+	}
 }
 
 // GetAllFIBEntries returns all nexthop entries in the FIB.

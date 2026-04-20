@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"runtime"
 	"sync/atomic"
-	"time"
 
 	"github.com/named-data/ndnd/fw/bier"
 	"github.com/named-data/ndnd/fw/core"
@@ -112,6 +111,11 @@ type Thread struct {
 	deadNonceList *table.DeadNonceList
 	shouldQuit    chan interface{}
 	HasQuit       chan interface{}
+
+	// Per-node FIB override for simulation (nil = use global)
+	fib table.FibStrategy
+	// Per-node PET override for simulation (nil = use global)
+	pet *table.PrefixEgressTable
 
 	// Counters
 	nInInterests          atomic.Uint64
@@ -317,7 +321,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 		}
 	} else {
 		petLookup = true
-		petEntry, petFound = table.Pet.FindLongestPrefixEnc(lookupName)
+		petEntry, petFound = t.Pet().FindLongestPrefixEnc(lookupName)
 		if petFound && petEntry.Multicast {
 			pipeline = fwMulticastIngress
 		} else {
@@ -362,7 +366,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 			csData, csWire, err := csEntry.Copy()
 			if csData != nil && csWire != nil {
 				// Mark PIT entry as expired
-				table.UpdateExpirationTimer(pitEntry, time.Now())
+				table.UpdateExpirationTimer(pitEntry, core.Now())
 
 				// Create the pending packet structure
 				packet.EgressRouter = nil
@@ -405,7 +409,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 	if pipeline.isIngressEgress() {
 		// perform cached pet lookup
 		if !petLookup {
-			petEntry, petFound = table.Pet.FindLongestPrefixEnc(lookupName)
+			petEntry, petFound = t.Pet().FindLongestPrefixEnc(lookupName)
 			petLookup = true
 		}
 
@@ -449,7 +453,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 		// FIB lookup to get the next network hops
 		nextNet := make([]StrategyCandidateHop, 0)
 		if len(packet.EgressRouter) > 0 {
-			for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(packet.EgressRouter) {
+			for _, nextHop := range t.Fib().FindNextHopsEnc(packet.EgressRouter) {
 				nextNet = append(nextNet, StrategyCandidateHop{
 					HopEntry:     nextHop,
 					EgressRouter: packet.EgressRouter,
@@ -457,7 +461,7 @@ func (t *Thread) processIncomingInterest(packet *defn.Pkt) {
 			}
 		} else if petFound {
 			for _, er := range petEntry.EgressRouters {
-				for _, nextHop := range table.FibStrategyTable.FindNextHopsEnc(er) {
+				for _, nextHop := range t.Fib().FindNextHopsEnc(er) {
 					nextNet = append(nextNet, StrategyCandidateHop{
 						HopEntry:     nextHop,
 						EgressRouter: er,
@@ -671,7 +675,7 @@ func (t *Thread) processIncomingData(packet *defn.Pkt) {
 	}
 
 	// Get strategy for name
-	strategyName := table.FibStrategyTable.FindStrategyEnc(data.NameV)
+	strategyName := t.Fib().FindStrategyEnc(data.NameV)
 	strategy := t.strategies[strategyName.Hash()]
 
 	if len(pitEntries) == 1 {
@@ -680,7 +684,7 @@ func (t *Thread) processIncomingData(packet *defn.Pkt) {
 		pitEntry := pitEntries[0]
 
 		// Set PIT entry expiration to now
-		table.UpdateExpirationTimer(pitEntry, time.Now())
+		table.UpdateExpirationTimer(pitEntry, core.Now())
 
 		// Invoke strategy's AfterReceiveData
 		core.Log.Trace(t, "Sending Data", "name", packet.Name, "strategy", strategyName)
@@ -714,7 +718,7 @@ func (t *Thread) processIncomingData(packet *defn.Pkt) {
 			}
 
 			// Set PIT entry expiration to now
-			table.UpdateExpirationTimer(pitEntry, time.Now())
+			table.UpdateExpirationTimer(pitEntry, core.Now())
 
 			// Invoke strategy's BeforeSatisfyInterest
 			strategy.BeforeSatisfyInterest(pitEntry, packet.IncomingFaceID)
@@ -776,4 +780,49 @@ func (t *Thread) processOutgoingData(
 		PitToken: pitToken,
 		InFace:   inFace,
 	})
+}
+
+// --- Simulation support ---
+
+// SetFib sets a per-node FIB override for simulation.
+func (t *Thread) SetFib(fib table.FibStrategy) {
+	t.fib = fib
+}
+
+// Fib returns the per-node FIB if set, otherwise the global FibStrategyTable.
+func (t *Thread) Fib() table.FibStrategy {
+	if t.fib != nil {
+		return t.fib
+	}
+	return table.FibStrategyTable
+}
+
+// SetPet sets a per-node PET override for simulation.
+func (t *Thread) SetPet(pet *table.PrefixEgressTable) {
+	t.pet = pet
+}
+
+// Pet returns the per-node PET if set, otherwise the global Pet.
+func (t *Thread) Pet() *table.PrefixEgressTable {
+	if t.pet != nil {
+		return t.pet
+	}
+	return &table.Pet
+}
+
+// ProcessPacket synchronously processes a single packet through the
+// forwarding pipeline. Used by the simulation engine instead of the
+// channel-based Run() loop.
+func (t *Thread) ProcessPacket(pkt *defn.Pkt) {
+	if pkt.L3.Interest != nil {
+		t.processIncomingInterest(pkt)
+	} else if pkt.L3.Data != nil {
+		t.processIncomingData(pkt)
+	}
+}
+
+// RunMaintenance runs PIT/CS expiry and dead-nonce-list cleanup synchronously.
+func (t *Thread) RunMaintenance() {
+	t.deadNonceList.RemoveExpiredEntries()
+	t.pitCS.Update()
 }

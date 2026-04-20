@@ -42,6 +42,8 @@ type PrefixModule struct {
 	activeFaces        map[uint64]struct{}
 	seenFaces          map[uint64]struct{}
 	routerName         enc.Name
+	nowFunc            func() time.Time
+	enableFaceEvents    bool
 }
 
 type petEgressOp struct {
@@ -65,6 +67,9 @@ func NewPrefixModule(
 	objectClient ndn.Client,
 	insertionTrust *sec.TrustConfig,
 	nfdcThread *nfdc.NfdMgmtThread,
+	goFunc func(func()),
+	nowFunc func() time.Time,
+	afterFunc func(time.Duration, func()) func(),
 ) *PrefixModule {
 	var ptable *table.PrefixEgreState
 
@@ -81,6 +86,9 @@ func NewPrefixModule(
 			Client:          objectClient,
 			GroupPrefix:     config.PrefixEgreStatePrefix(),
 			PeriodicTimeout: config.PrefixSyncInterval(),
+			GoFunc:          goFunc,
+			NowFunc:         nowFunc,
+			AfterFunc:       afterFunc,
 		},
 		Snapshot: &ndn_sync.SnapshotNodeLatest{
 			Client: objectClient,
@@ -120,6 +128,7 @@ func NewPrefixModule(
 		activeFaces:        make(map[uint64]struct{}),
 		seenFaces:          make(map[uint64]struct{}),
 		routerName:         config.RouterName(),
+		nowFunc:            nowFunc,
 	}
 	pfxSvs.SetOnPublisher(pfxModule.onPublisher)
 	if !pfxModule.replicatePes {
@@ -134,7 +143,9 @@ func NewPrefixModule(
 
 func (pfx *PrefixModule) Start() {
 	pfx.pfxSvs.Start()
-	pfx.startFaceEvents()
+	if pfx.enableFaceEvents {
+		pfx.startFaceEvents()
+	}
 	pfx.startPrefixPrune()
 	pfx.pfx.Reset()
 }
@@ -143,6 +154,11 @@ func (pfx *PrefixModule) Stop() {
 	pfx.stopPrefixPrune()
 	pfx.stopFaceEvents()
 	pfx.pfxSvs.Stop()
+}
+
+// SuppressionStats returns the SVS suppression statistics.
+func (pfx *PrefixModule) SuppressionStats() ndn_sync.SuppressStats {
+	return pfx.pfxSvs.SuppressionStats()
 }
 
 func (pfx *PrefixModule) onPublisher(name enc.Name) {
@@ -164,6 +180,13 @@ func (pfx *PrefixModule) onPublisher(name enc.Name) {
 		shouldSubscribe = true
 	}
 	pfx.mu.Unlock()
+
+	if shouldInstall {
+		table.NotifyRouterReachable(table.RouterReachableEvent{
+			NodeRouter:      pfx.routerName,
+			ReachableRouter: name,
+		})
+	}
 
 	if shouldInstall && pfx.replicatePes {
 		if pfx.nfdc != nil {
@@ -506,7 +529,7 @@ func (pfx *PrefixModule) stopPrefixPrune() {
 }
 
 func (pfx *PrefixModule) pruneExpired() {
-	now := time.Now().UTC()
+	now := pfx.nowFunc().UTC()
 
 	pfx.mu.Lock()
 	expired, _ := pfx.pfx.PruneExpired(now)
@@ -625,7 +648,7 @@ func (pfx *PrefixModule) runFaceEvents(stop <-chan struct{}, done chan<- struct{
 		default:
 		}
 
-		seq, notification, err := pfx.fetchFaceEvent(nextSeq)
+		seq, notification, err := pfx.fetchFaceEvent(nextSeq, stop)
 		if err != nil {
 			select {
 			case <-stop:
@@ -654,7 +677,7 @@ func (pfx *PrefixModule) runFaceEvents(stop <-chan struct{}, done chan<- struct{
 	}
 }
 
-func (pfx *PrefixModule) fetchFaceEvent(nextSeq uint64) (uint64, *mgmt.FaceEventNotification, error) {
+func (pfx *PrefixModule) fetchFaceEvent(nextSeq uint64, stop <-chan struct{}) (uint64, *mgmt.FaceEventNotification, error) {
 	engine := pfx.client.Engine()
 	if engine == nil {
 		return 0, nil, fmt.Errorf("missing client engine")
@@ -692,7 +715,12 @@ func (pfx *PrefixModule) fetchFaceEvent(nextSeq uint64) (uint64, *mgmt.FaceEvent
 		return 0, nil, err
 	}
 
-	args := <-ch
+	var args ndn.ExpressCallbackArgs
+	select {
+	case args = <-ch:
+	case <-stop:
+		return 0, nil, fmt.Errorf("stopped")
+	}
 	switch args.Result {
 	case ndn.InterestResultTimeout:
 		return 0, nil, nil

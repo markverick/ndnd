@@ -143,7 +143,9 @@ func (a *advertModule) OnSyncInterest(args ndn.InterestHandlerArgs, active bool)
 			}
 
 			// Process the state vector
-			go a.onStateVector(params.StateVector, args.IncomingFaceId.Unwrap(), active)
+			a.dv.GoFunc(func() {
+				a.onStateVector(params.StateVector, args.IncomingFaceId.Unwrap(), active)
+			})
 		},
 	})
 }
@@ -197,13 +199,13 @@ func (a *advertModule) onStateVector(sv *spec_svs.StateVector, faceId uint64, ac
 		ns.AdvertBoot = entry.BootstrapTime
 		ns.AdvertSeq = entry.SeqNo
 
-		time.AfterFunc(10*time.Millisecond, func() { // debounce
+		a.dv.AfterFunc(10*time.Millisecond, func() { // debounce
 			a.dataFetch(node.Name, entry.BootstrapTime, entry.SeqNo)
 		})
 	}
 
 	// Update FIB if needed
 	if fibDirty {
-		go a.dv.updateFib()
+		a.dv.GoFunc(a.dv.updateFib)
 	}
 }

@@ -8,14 +8,17 @@
 package table
 
 import (
+	"sync"
 	"time"
 
+	"github.com/named-data/ndnd/fw/core"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/types/priority_queue"
 )
 
 // DeadNonceList represents the Dead Nonce List for a forwarding thread.
 type DeadNonceList struct {
+	mutex           sync.RWMutex
 	list            map[uint64]bool
 	expirationQueue priority_queue.Queue[uint64, int64]
 	Ticker          *time.Ticker
@@ -32,6 +35,8 @@ func NewDeadNonceList() *DeadNonceList {
 
 // Find returns whether the specified name and nonce combination are present in the Dead Nonce List.
 func (d *DeadNonceList) Find(name enc.Name, nonce uint32) bool {
+	d.mutex.RLock()
+	defer d.mutex.RUnlock()
 	_, ok := d.list[name.Hash()+uint64(nonce)]
 	return ok
 }
@@ -39,20 +44,27 @@ func (d *DeadNonceList) Find(name enc.Name, nonce uint32) bool {
 // Insert inserts an entry in the Dead Nonce List with the specified name and nonce.
 // Returns whether nonce already present.
 func (d *DeadNonceList) Insert(name enc.Name, nonce uint32) bool {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+
 	hash := name.Hash() + uint64(nonce)
 	_, exists := d.list[hash]
 
 	if !exists {
 		d.list[hash] = true
-		d.expirationQueue.Push(hash, time.Now().Add(CfgDeadNonceListLifetime()).UnixNano())
+		d.expirationQueue.Push(hash, core.Now().Add(CfgDeadNonceListLifetime()).UnixNano())
 	}
 	return exists
 }
 
 // RemoveExpiredEntry removes all expired entries from Dead Nonce List.
 func (d *DeadNonceList) RemoveExpiredEntries() {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+
 	evicted := 0
-	for d.expirationQueue.Len() > 0 && d.expirationQueue.PeekPriority() < time.Now().UnixNano() {
+	now := core.Now().UnixNano()
+	for d.expirationQueue.Len() > 0 && d.expirationQueue.PeekPriority() < now {
 		hash := d.expirationQueue.Pop()
 		delete(d.list, hash)
 		evicted += 1

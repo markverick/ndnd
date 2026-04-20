@@ -164,7 +164,7 @@ func (pfx *PrefixModule) onPrefixInsertionObject(object ndn.Data, faceId uint64)
 	}
 
 	if params.ValidityPeriod != nil {
-		now := time.Now().UTC()
+		now := pfx.nowFunc().UTC()
 		if params.ValidityPeriod.NotBefore != "" {
 			notBefore, err := time.Parse(spec.TimeFmt, params.ValidityPeriod.NotBefore)
 			if err != nil {

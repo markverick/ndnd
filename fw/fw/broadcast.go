@@ -77,7 +77,7 @@ func (s *BroadcastStrategy) AfterReceiveMulticastInterest(
 	sent := 0
 
 	for _, egress := range petEntry.EgressRouters {
-		nextHops := table.FibStrategyTable.FindNextHopsEnc(egress)
+		nextHops := s.thread.Fib().FindNextHopsEnc(egress)
 
 		for _, nextHop := range nextHops {
 			faceID := nextHop.Nexthop

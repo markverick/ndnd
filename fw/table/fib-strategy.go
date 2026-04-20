@@ -40,6 +40,7 @@ type FibStrategy interface {
 	InsertNextHopEnc(name enc.Name, nextHop uint64, cost uint64)
 	ClearNextHopsEnc(name enc.Name)
 	RemoveNextHopEnc(name enc.Name, nextHop uint64)
+	CleanUpFace(faceID uint64)
 	GetNumFIBEntries() int
 	GetAllFIBEntries() []FibStrategyEntry
 	SetStrategyEnc(name enc.Name, strategy enc.Name)

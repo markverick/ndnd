@@ -22,7 +22,7 @@ type SvSync struct {
 
 	running atomic.Bool
 	stop    chan struct{}
-	ticker  *time.Ticker
+	ticker  *simTicker
 
 	mutex  sync.Mutex
 	state  SvMap[uint64]
@@ -32,6 +32,11 @@ type SvSync struct {
 	// Suppression state
 	suppress bool
 	merge    SvMap[uint64]
+
+	// Suppression counters
+	SuppressEnter   atomic.Uint64
+	SuppressSuccess atomic.Uint64
+	SuppressFail    atomic.Uint64
 
 	// Buffered wires (passive mode)
 	passiveWiresSv     SvMap[enc.Wire]
@@ -71,6 +76,13 @@ type SvSyncOpts struct {
 	Passive bool
 	// IgnoreValidity ignores validity period in the validation chain
 	IgnoreValidity optional.Optional[bool]
+
+	// GoFunc launches a goroutine (or schedules for sim). Defaults to go.
+	GoFunc func(func())
+	// NowFunc returns current time. Defaults to time.Now.
+	NowFunc func() time.Time
+	// AfterFunc schedules f after d. Returns cancel function. Defaults to time.AfterFunc.
+	AfterFunc func(time.Duration, func()) func()
 }
 
 type SvSyncUpdate struct {
@@ -78,6 +90,12 @@ type SvSyncUpdate struct {
 	Boot uint64
 	High uint64
 	Low  uint64
+}
+
+type SuppressStats struct {
+	Enter uint64 `json:"enter"`
+	Ok    uint64 `json:"ok"`
+	Fail  uint64 `json:"fail"`
 }
 
 type svSyncRecvSvArgs struct {
@@ -110,8 +128,20 @@ func NewSvSync(opts SvSyncOpts) *SvSync {
 	}
 
 	// Set default options
+	if opts.GoFunc == nil {
+		opts.GoFunc = func(f func()) { go f() }
+	}
+	if opts.NowFunc == nil {
+		opts.NowFunc = time.Now
+	}
+	if opts.AfterFunc == nil {
+		opts.AfterFunc = func(d time.Duration, f func()) func() {
+			t := time.AfterFunc(d, f)
+			return func() { t.Stop() }
+		}
+	}
 	if opts.BootTime == 0 {
-		opts.BootTime = uint64(time.Now().Unix())
+		opts.BootTime = uint64(opts.NowFunc().Unix())
 	}
 	if opts.PeriodicTimeout == 0 {
 		opts.PeriodicTimeout = 30 * time.Second
@@ -128,7 +158,7 @@ func NewSvSync(opts SvSyncOpts) *SvSync {
 
 		running: atomic.Bool{},
 		stop:    make(chan struct{}),
-		ticker:  time.NewTicker(opts.PeriodicTimeout),
+		ticker:  newSimTicker(opts.PeriodicTimeout, opts.AfterFunc),
 
 		mutex:  sync.Mutex{},
 		state:  initialState,
@@ -152,6 +182,15 @@ func (s *SvSync) String() string {
 	return fmt.Sprintf("svs (%s)", s.o.GroupPrefix)
 }
 
+// SuppressionStats returns the SVS suppression statistics.
+func (s *SvSync) SuppressionStats() SuppressStats {
+	return SuppressStats{
+		Enter: s.SuppressEnter.Load(),
+		Ok:    s.SuppressSuccess.Load(),
+		Fail:  s.SuppressFail.Load(),
+	}
+}
+
 // Start the SV Sync instance.
 func (s *SvSync) Start() (err error) {
 	err = s.o.Client.Engine().AttachHandler(s.prefix,
@@ -162,6 +201,9 @@ func (s *SvSync) Start() (err error) {
 		return err
 	}
 
+	// main is a long-lived channel loop. Running it as a simulated zero-delay
+	// callback would block deterministic clock advancement, so keep it on a
+	// real goroutine and use the injected clock only for time-based work.
 	go s.main()
 
 	return nil
@@ -178,17 +220,17 @@ func (s *SvSync) main() {
 
 	// Notify everyone when we are back online
 	s.faceCancel = s.o.Client.Engine().Face().OnUp(func() {
-		time.AfterFunc(100*time.Millisecond, s.sendSyncInterest)
+		s.o.AfterFunc(100*time.Millisecond, s.sendSyncInterest)
 	})
 	defer s.faceCancel()
 
 	if s.o.Passive {
 		// [Passive] Load the buffered wires from persistence
 		// This will send the initial Sync Interest
-		go s.loadPassiveWires()
+		s.o.GoFunc(s.loadPassiveWires)
 	} else {
 		// Send the initial Sync Interest
-		go s.sendSyncInterest()
+		s.o.GoFunc(s.sendSyncInterest)
 	}
 
 	for {
@@ -240,7 +282,7 @@ func (s *SvSync) SetSeqNo(name enc.Name, seqNo uint64) error {
 	// [Spec] When the node generates a new publication,
 	// immediately emit a Sync Interest
 	s.state.Set(hash, s.o.BootTime, seqNo)
-	go s.sendSyncInterest()
+	s.o.GoFunc(s.sendSyncInterest)
 
 	return nil
 }
@@ -262,7 +304,7 @@ func (s *SvSync) IncrSeqNo(name enc.Name) uint64 {
 
 	// [Spec] When the node generates a new publication,
 	// immediately emit a Sync Interest
-	go s.sendSyncInterest()
+	s.o.GoFunc(s.sendSyncInterest)
 
 	return entry
 }
@@ -304,7 +346,7 @@ func (s *SvSync) onReceiveStateVector(args svSyncRecvSvArgs) {
 	isOutdated := false
 	canDrop := true
 	recvSv := NewSvMap[uint64](len(args.sv.Entries))
-	now := time.Now()
+	now := s.o.NowFunc()
 
 	for _, node := range args.sv.Entries {
 		hash := node.Name.TlvStr()
@@ -377,7 +419,7 @@ func (s *SvSync) onReceiveStateVector(args svSyncRecvSvArgs) {
 
 	// [Passive] Persist the buffered wires with throttling
 	if s.o.Passive && !s.passiveWillPersist.Swap(true) {
-		time.AfterFunc(5*time.Second, s.persistPassiveWires)
+		s.o.AfterFunc(5*time.Second, s.persistPassiveWires)
 	}
 
 	if !isOutdated {
@@ -393,6 +435,7 @@ func (s *SvSync) onReceiveStateVector(args svSyncRecvSvArgs) {
 	// [Spec] Incoming Sync Interest is outdated.
 	// [Spec] Move to Suppression State.
 	s.suppress = true
+	s.SuppressEnter.Add(1)
 	s.merge.Clear()
 
 	// [Spec] When entering Suppression State, reset
@@ -409,16 +452,18 @@ func (s *SvSync) timerExpired() {
 	if s.suppress {
 		// [Spec] If MergedStateVector is up-to-date; no inconsistency.
 		if !s.state.IsNewerThan(s.merge, func(a, b uint64) bool { return a > b }) {
+			s.SuppressSuccess.Add(1)
 			s.enterSteadyState()
 			return
 		}
 		// [Spec] If MergedStateVector is outdated; inconsistent state.
 		// Emit up-to-date Sync Interest.
+		s.SuppressFail.Add(1)
 	}
 
 	// [Spec] On expiration of timer emit a Sync Interest
 	// with the current local state vector.
-	go s.sendSyncInterest()
+	s.o.GoFunc(s.sendSyncInterest)
 }
 
 // (AI GENERATED DESCRIPTION): Sends a sync Interest: if passive mode is enabled, it publishes all buffered state updates without duplicates; otherwise, it encodes the current state vector into a wire and transmits it, provided the sync service is running.
@@ -661,5 +706,49 @@ func (s *SvSync) loadPassiveWires() {
 	}
 
 	// This is hacky but pragmatic - wait for the state to be processed
-	time.AfterFunc(500*time.Millisecond, s.sendSyncInterest)
+	s.o.AfterFunc(500*time.Millisecond, s.sendSyncInterest)
+}
+
+// simTicker wraps AfterFunc to implement a resettable ticker that works
+// with both real time and simulated time.
+type simTicker struct {
+	C         chan time.Time
+	cancel    func()
+	period    time.Duration
+	afterFunc func(time.Duration, func()) func()
+}
+
+func newSimTicker(d time.Duration, afterFunc func(time.Duration, func()) func()) *simTicker {
+	t := &simTicker{
+		C:         make(chan time.Time, 1),
+		period:    d,
+		afterFunc: afterFunc,
+	}
+	t.schedule(d)
+	return t
+}
+
+func (t *simTicker) schedule(d time.Duration) {
+	t.cancel = t.afterFunc(d, func() {
+		select {
+		case t.C <- time.Time{}:
+		default:
+		}
+		t.schedule(t.period)
+	})
+}
+
+func (t *simTicker) Reset(d time.Duration) {
+	if t.cancel != nil {
+		t.cancel()
+	}
+	t.period = d
+	t.schedule(d)
+}
+
+func (t *simTicker) Stop() {
+	if t.cancel != nil {
+		t.cancel()
+		t.cancel = nil
+	}
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	enc "github.com/named-data/ndnd/std/encoding"
+	"github.com/named-data/ndnd/std/ndn"
 	mgmt "github.com/named-data/ndnd/std/ndn/mgmt_2022"
 )
 
@@ -64,8 +65,21 @@ type Config struct {
 	Neighbors []Neighbor `json:"neighbors"`
 	// Replicate Prefix Egress State into forwarder PET.
 	PrefixEgreStateReplicate bool `json:"prefix_egre_state_replicate"`
+	// Delay before starting PrefixSync SVS (ms). 0 = immediate.
+	PrefixSyncDelay_ms uint64 `json:"prefix_sync_delay"`
+	// Disable PrefixSync snapshots.
+	DisablePrefixSnap bool `json:"disable_prefix_snap"`
+	// Override the snapshot threshold (0 = default).
+	PrefixSnapThreshold int `json:"prefix_snap_threshold"`
 	// Directory that contains the loaded config file.
 	ConfigDir string `json:"-"`
+
+	// Pre-built keychain for simulation (bypasses KeyChainUri).
+	KeyChain ndn.KeyChain `json:"-"`
+	// Pre-built object store for simulation.
+	Store ndn.Store `json:"-"`
+	// Pre-parsed trust anchor names for simulation.
+	SimTrustAnchors []enc.Name `json:"-"`
 
 	// Parsed Global Prefix
 	networkNameN enc.Name

@@ -122,7 +122,7 @@ func (dv *Router) mgmtOnPrefix(args ndn.InterestHandlerArgs) {
 		}
 
 		entries := dv.pfx.SnapshotEntries()
-		now := time.Now().UTC()
+		now := dv.NowFunc().UTC()
 		var out strings.Builder
 		out.WriteString("Prefix list:\n")
 
@@ -287,7 +287,7 @@ func (dv *Router) mgmtOnPrefix(args ndn.InterestHandlerArgs) {
 			}
 
 			validity = &spec.ValidityPeriod{
-				NotAfter: time.Now().UTC().Add(time.Duration(expires) * time.Millisecond).Format(spec.TimeFmt),
+				NotAfter: dv.NowFunc().UTC().Add(time.Duration(expires) * time.Millisecond).Format(spec.TimeFmt),
 			}
 			responseParams.ExpirationPeriod = optional.Some(expires)
 		}

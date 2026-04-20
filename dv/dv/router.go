@@ -8,6 +8,7 @@ import (
 	"github.com/named-data/ndnd/dv/config"
 	"github.com/named-data/ndnd/dv/nfdc"
 	"github.com/named-data/ndnd/dv/table"
+	"github.com/named-data/ndnd/fw/core"
 	"github.com/named-data/ndnd/fw/defn"
 	enc "github.com/named-data/ndnd/std/encoding"
 	"github.com/named-data/ndnd/std/log"
@@ -18,11 +19,20 @@ import (
 	sec "github.com/named-data/ndnd/std/security"
 	"github.com/named-data/ndnd/std/security/keychain"
 	"github.com/named-data/ndnd/std/security/trust_schema"
+	ndn_sync "github.com/named-data/ndnd/std/sync"
 	"github.com/named-data/ndnd/std/types/optional"
 	"github.com/named-data/ndnd/std/utils"
 )
 
 const PrefixSnapThreshold = 50
+
+// PrefixSyncSuppressionStats returns SVS suppression statistics.
+func (dv *Router) PrefixSyncSuppressionStats() ndn_sync.SuppressStats {
+	if dv.pfx == nil {
+		return ndn_sync.SuppressStats{}
+	}
+	return dv.pfx.SuppressionStats()
+}
 
 type Router struct {
 	// go-ndn app that this router is attached to
@@ -31,6 +41,8 @@ type Router struct {
 	config *config.Config
 	// trust configuration
 	trust *sec.TrustConfig
+	// prefix insertion trust configuration
+	insertionTrust *sec.TrustConfig
 	// object client
 	client ndn.Client
 	// nfd management thread
@@ -56,6 +68,20 @@ type Router struct {
 	rib *table.Rib
 	// forwarding table
 	fib *table.Fib
+
+	// GoFunc dispatches work asynchronously.
+	// Defaults to "go f()" in production; overridden by sim.
+	GoFunc func(func())
+	// NowFunc returns current time. Defaults to core.Now.
+	NowFunc func() time.Time
+	// AfterFunc schedules f after d. Returns cancel function.
+	// Defaults to time.AfterFunc wrapper.
+	AfterFunc func(time.Duration, func()) func()
+	// EnableFaceEvents controls the face-event polling loop used for local
+	// prefix pruning. Simulation disables it because the pure-Go harness uses
+	// a single-threaded forwarder/engine and this loop would introduce
+	// concurrent management traffic.
+	EnableFaceEvents bool
 }
 
 // Create a new DV router.
@@ -67,11 +93,27 @@ func NewRouter(config *config.Config, engine ndn.Engine) (*Router, error) {
 	}
 
 	// Create packet store
-	store := storage.NewMemoryStore()
+	var store ndn.Store = storage.NewMemoryStore()
+	if config.Store != nil {
+		store = config.Store
+	}
 
 	// Create security configuration
 	var trust *sec.TrustConfig = nil
-	if config.KeyChainUri == "insecure" {
+	if config.KeyChain != nil {
+		// Simulation: use pre-built keychain and trust anchors
+		anchors := config.SimTrustAnchors
+		if len(anchors) == 0 {
+			anchors = config.TrustAnchorNames()
+		}
+		schema := trust_schema.NewNullSchema()
+		var err2 error
+		trust, err2 = sec.NewTrustConfig(config.KeyChain, schema, anchors)
+		if err2 != nil {
+			return nil, err2
+		}
+		trust.UseDataNameFwHint = true
+	} else if config.KeyChainUri == "insecure" {
 		log.Warn(nil, "Security is disabled - insecure mode")
 	} else {
 		kc, err := keychain.NewKeyChain(config.KeyChainUri, store)
@@ -98,49 +140,66 @@ func NewRouter(config *config.Config, engine ndn.Engine) (*Router, error) {
 	}
 
 	// Prefix insertion security is enabled via schema configured in dv config.
-	insertionStore := storage.NewMemoryStore()
-	kc, err := keychain.NewKeyChain(config.PrefixInsertionKeychainUri, insertionStore)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open prefix insertion keychain: %w", err)
-	}
-
-	var insertionSchema ndn.TrustSchema
-	if schemaBytes := config.PrefixInsertionSchemaBytes(); len(schemaBytes) > 0 {
-		insertionSchema, err = trust_schema.NewLvsSchema(schemaBytes)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse prefix insertion trust schema: %w", err)
+	var insertionTrust *sec.TrustConfig
+	if config.KeyChain != nil {
+		// Simulation: reuse pre-built keychain for insertion trust
+		anchors := config.SimTrustAnchors
+		if len(anchors) == 0 {
+			anchors = config.PrefixInsertionTrustAnchorNames()
 		}
+		insertionSchema := trust_schema.NewNullSchema()
+		insertionTrust, err = sec.NewTrustConfig(config.KeyChain, insertionSchema, anchors)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create sim prefix insertion trust config: %w", err)
+		}
+		insertionTrust.UseDataNameFwHint = true
 	} else {
-		insertionSchema = trust_schema.NewNullSchema()
-	}
+		insertionStore := storage.NewMemoryStore()
+		kc, err := keychain.NewKeyChain(config.PrefixInsertionKeychainUri, insertionStore)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open prefix insertion keychain: %w", err)
+		}
 
-	anchors := config.PrefixInsertionTrustAnchorNames()
-	insertionTrust, err := sec.NewTrustConfig(kc, insertionSchema, anchors)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create prefix insertion trust config: %w", err)
+		var insertionSchema ndn.TrustSchema
+		if schemaBytes := config.PrefixInsertionSchemaBytes(); len(schemaBytes) > 0 {
+			insertionSchema, err = trust_schema.NewLvsSchema(schemaBytes)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse prefix insertion trust schema: %w", err)
+			}
+		} else {
+			insertionSchema = trust_schema.NewNullSchema()
+		}
+
+		anchors := config.PrefixInsertionTrustAnchorNames()
+		insertionTrust, err = sec.NewTrustConfig(kc, insertionSchema, anchors)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create prefix insertion trust config: %w", err)
+		}
+		insertionTrust.UseDataNameFwHint = true
 	}
-	insertionTrust.UseDataNameFwHint = true
 
 	// Create the DV router
 	dv := &Router{
 		engine: engine,
 		config: config,
 		trust:  trust,
+		insertionTrust: insertionTrust,
 		client: object.NewClient(engine, store, trust),
 		nfdc:   nfdc.NewNfdMgmtThread(engine),
 		mutex:  sync.Mutex{},
+		GoFunc:  func(f func()) { go f() },
+		NowFunc: core.Now,
+		AfterFunc: func(d time.Duration, f func()) func() {
+			t := time.AfterFunc(d, f)
+			return func() { t.Stop() }
+		},
+		EnableFaceEvents: true,
 	}
 
-	// Initialize advertisement module
-	dv.advert = advertModule{
-		dv:       dv,
-		bootTime: uint64(time.Now().Unix()),
-		seq:      0,
-		objDir:   storage.NewMemoryFifoDir(32), // keep last few advertisements
-	}
-
-	// Create prefix egress state daemon.
-	dv.pfx = NewPrefixModule(dv.config, dv.client, insertionTrust, dv.nfdc)
+	// NOTE: bootTime must NOT be computed here — NowFunc may still point to
+	// core.Now (wall clock). In simulation, SimDvRouter overrides NowFunc to
+	// the sim clock AFTER construction. bootTime is computed lazily in
+	// Start() / Init() when NowFunc is guaranteed to be correct.
 
 	// Create DV tables
 	dv.neighbors = table.NewNeighborTable(config, dv.nfdc)
@@ -155,10 +214,29 @@ func (dv *Router) String() string {
 	return "dv-router"
 }
 
+func (dv *Router) ensurePrefixModule() {
+	if dv.pfx != nil {
+		return
+	}
+	dv.pfx = NewPrefixModule(dv.config, dv.client, dv.insertionTrust, dv.nfdc,
+		dv.GoFunc, dv.NowFunc, dv.AfterFunc)
+	dv.pfx.enableFaceEvents = dv.EnableFaceEvents
+}
+
 // Start the DV router. Blocks until Stop() is called.
 func (dv *Router) Start() (err error) {
 	log.Info(dv, "Starting DV router", "version", utils.NDNdVersion)
 	defer log.Info(dv, "Stopped DV router")
+	dv.ensurePrefixModule()
+
+	// Lazily initialize bootTime and advert module so that any NowFunc
+	// override is in effect.
+	dv.advert = advertModule{
+		dv:       dv,
+		bootTime: max(uint64(dv.NowFunc().Unix()), 1),
+		seq:      0,
+		objDir:   storage.NewMemoryFifoDir(32),
+	}
 
 	// Initialize channels
 	dv.stop = make(chan bool, 1)
@@ -178,7 +256,7 @@ func (dv *Router) Start() (err error) {
 	defer dv.client.Stop()
 
 	// Start management thread
-	go dv.nfdc.Start()
+	dv.GoFunc(func() { dv.nfdc.Start() })
 	defer dv.nfdc.Stop()
 
 	// Configure face
@@ -219,6 +297,71 @@ func (dv *Router) Stop() {
 	dv.stop <- true
 }
 
+// Init initializes the DV router without blocking.
+// This is the simulation-compatible variant of Start() — it performs all
+// setup (faces, handlers, sync groups, initial advertisement) but returns
+// immediately instead of entering a ticker-driven select loop.
+// The caller is responsible for periodically calling RunHeartbeat() and
+// RunDeadcheck() using the simulation clock.
+func (dv *Router) Init() error {
+	log.Info(dv, "Initializing DV router (sim)", "version", utils.NDNdVersion)
+	dv.ensurePrefixModule()
+
+	// Lazily initialize bootTime and advert module so that the NowFunc
+	// override installed by SimDvRouter (clock.Now) is used instead of
+	// the wall clock.
+	dv.advert = advertModule{
+		dv:       dv,
+		bootTime: max(uint64(dv.NowFunc().Unix()), 1),
+		seq:      0,
+		objDir:   storage.NewMemoryFifoDir(32),
+	}
+
+	// Start object client
+	dv.client.Start()
+
+	// Register interest handlers
+	if err := dv.register(); err != nil {
+		return err
+	}
+
+	// Start prefix information daemon
+	dv.pfx.Start()
+
+	// Add self to the RIB and make initial advertisement
+	dv.rib.Set(dv.config.RouterName(), dv.config.RouterName(), 0)
+	dv.advert.generate()
+
+	// Initialize prefix egress state
+	dv.pfx.Reset()
+
+	return nil
+}
+
+// RunHeartbeat sends a sync Interest to all neighbors.
+func (dv *Router) RunHeartbeat() {
+	dv.advert.sendSyncInterest()
+}
+
+// RunDeadcheck checks for dead neighbors and prunes routes.
+func (dv *Router) RunDeadcheck() {
+	dv.checkDeadNeighbors()
+}
+
+// Cleanup tears down the DV router (simulation variant).
+func (dv *Router) Cleanup() {
+	if dv.pfx != nil {
+		dv.pfx.Stop()
+	}
+	dv.client.Stop()
+	log.Info(dv, "Cleaned up DV router (sim)")
+}
+
+// Nfdc returns the NFD management thread.
+func (dv *Router) Nfdc() *nfdc.NfdMgmtThread {
+	return dv.nfdc
+}
+
 // Configure the face to forwarder.
 func (dv *Router) configureFace() (err error) {
 	// Enable local fields on face. This includes incoming face indication.
@@ -242,7 +385,7 @@ func (dv *Router) register() (err error) {
 	// Advertisement Sync (active)
 	err = dv.engine.AttachHandler(dv.config.AdvertisementSyncActivePrefix(),
 		func(args ndn.InterestHandlerArgs) {
-			go dv.advert.OnSyncInterest(args, true)
+			dv.GoFunc(func() { dv.advert.OnSyncInterest(args, true) })
 		})
 	if err != nil {
 		return err
@@ -251,7 +394,7 @@ func (dv *Router) register() (err error) {
 	// Advertisement Sync (passive)
 	err = dv.engine.AttachHandler(dv.config.AdvertisementSyncPassivePrefix(),
 		func(args ndn.InterestHandlerArgs) {
-			go dv.advert.OnSyncInterest(args, false)
+			dv.GoFunc(func() { dv.advert.OnSyncInterest(args, false) })
 		})
 	if err != nil {
 		return err
@@ -260,7 +403,7 @@ func (dv *Router) register() (err error) {
 	// Router management
 	err = dv.engine.AttachHandler(dv.config.MgmtPrefix(),
 		func(args ndn.InterestHandlerArgs) {
-			go dv.mgmtOnInterest(args)
+			dv.GoFunc(func() { dv.mgmtOnInterest(args) })
 		})
 	if err != nil {
 		return err
@@ -269,7 +412,7 @@ func (dv *Router) register() (err error) {
 	insertPrefix := dv.pfx.InsertionPrefix()
 	err = dv.engine.AttachHandler(insertPrefix,
 		func(args ndn.InterestHandlerArgs) {
-			go dv.pfx.OnInsertion(args)
+			dv.GoFunc(func() { dv.pfx.OnInsertion(args) })
 		})
 	if err != nil {
 		return err

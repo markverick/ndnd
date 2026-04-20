@@ -89,7 +89,7 @@ func (p *PitCsTree) UpdateTicker() <-chan time.Time {
 
 // (AI GENERATED DESCRIPTION): Expires all pending PIT entries whose timers have elapsed, invoking their expiration callbacks and removing them from the PIT.
 func (p *PitCsTree) Update() {
-	for p.pitExpiryQueue.Len() > 0 && p.pitExpiryQueue.PeekPriority() <= time.Now().UnixNano() {
+	for p.pitExpiryQueue.Len() > 0 && p.pitExpiryQueue.PeekPriority() <= core.Now().UnixNano() {
 		entry := p.pitExpiryQueue.Pop()
 		entry.pqItem = nil
 		p.onExpiration(entry)
@@ -346,7 +346,7 @@ func (p *PitCsTree) FindMatchingDataFromCS(interest *defn.FwInterest) CsEntry {
 	if node != nil {
 		if !interest.CanBePrefixV {
 			if node.csEntry != nil &&
-				(!interest.MustBeFreshV || time.Now().Before(node.csEntry.staleTime)) {
+				(!interest.MustBeFreshV || core.Now().Before(node.csEntry.staleTime)) {
 				p.csReplacement.BeforeUse(node.csEntry.index, node.csEntry.wire)
 				return node.csEntry
 			}
@@ -362,7 +362,7 @@ func (p *PitCsTree) FindMatchingDataFromCS(interest *defn.FwInterest) CsEntry {
 // InsertData inserts a Data packet into the Content Store.
 func (p *PitCsTree) InsertData(data *defn.FwData, wire []byte) {
 	index := data.NameV.Hash()
-	staleTime := time.Now()
+	staleTime := core.Now()
 	if data.MetaInfo != nil && data.MetaInfo.FreshnessPeriod.IsSet() {
 		staleTime = staleTime.Add(data.MetaInfo.FreshnessPeriod.Unwrap())
 	}
@@ -413,7 +413,7 @@ func (p *PitCsTree) eraseCsDataFromReplacementStrategy(index uint64) {
 // For example, if we have data for /a/b/v=10 and the interest is /a/b,
 // p should be the `b` node, not the root node.
 func (p *pitCsTreeNode) findMatchingDataCSPrefix(interest *defn.FwInterest) CsEntry {
-	if p.csEntry != nil && (!interest.MustBeFreshV || time.Now().Before(p.csEntry.staleTime)) {
+	if p.csEntry != nil && (!interest.MustBeFreshV || core.Now().Before(p.csEntry.staleTime)) {
 		// A csEntry exists at this node and is acceptable to satisfy the interest
 		return p.csEntry
 	}

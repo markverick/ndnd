@@ -51,6 +51,18 @@ func newFibStrategyTableTree() {
 	FibStrategyTable = newStrategyTableTree(defn.DEFAULT_STRATEGY)
 }
 
+// NewFibStrategyTree creates a standalone FibStrategyTree for per-node simulation use.
+func NewFibStrategyTree() *FibStrategyTree {
+	return newStrategyTableTree(defn.DEFAULT_STRATEGY)
+}
+
+// NewMulticastStrategyTree creates a standalone FibStrategyTree for per-node multicast
+// strategy use in simulation.  The default strategy is BROADCAST, matching the global
+// MulticastStrategyTable initialized by table.Initialize().
+func NewMulticastStrategyTree() *FibStrategyTree {
+	return newStrategyTableTree(defn.BROADCAST_STRATEGY)
+}
+
 // newMulticastStrategyTableTree initializes the MulticastStrategyTable with
 // a new FibStrategyTree whose root entry has an empty component and default strategy.
 func newMulticastStrategyTableTree(defaultStrategy enc.Name) {
@@ -107,7 +119,7 @@ func (f *fibStrategyTreeEntry) pruneIfEmpty() {
 	for entry := f; entry.parent != nil && len(entry.children) == 0 && len(entry.nexthops) == 0 && entry.strategy == nil; entry = entry.parent {
 		// Remove from parent's children
 		for i, child := range entry.parent.children {
-			if child == f {
+			if child == entry {
 				if i < len(entry.parent.children)-1 {
 					copy(entry.parent.children[i:], entry.parent.children[i+1:])
 				}
@@ -192,6 +204,7 @@ func (f *FibStrategyTree) ClearNextHopsEnc(name enc.Name) {
 	node := f.root.findExactMatchEntryEnc(name)
 	if node != nil {
 		node.nexthops = make([]*FibNextHopEntry, 0)
+		node.pruneIfEmpty()
 	}
 }
 
@@ -225,6 +238,40 @@ func (f *FibStrategyTree) GetNumFIBEntries() int {
 		count++
 	})
 	return count
+}
+
+// CleanUpFace removes all nexthop entries for the given face from the entire
+// FIB tree and prunes any nodes that become empty as a result.  This is more
+// efficient than calling GetAllFIBEntries + RemoveNextHopEnc in a loop because
+// it acquires the lock only once and avoids repeated name lookups.
+func (f *FibStrategyTree) CleanUpFace(faceID uint64) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	// Collect affected entries in one pass (walk takes a snapshot of children
+	// before visiting, so later pruning does not invalidate the queue).
+	var affected []*fibStrategyTreeEntry
+	f.walk(func(entry *fibStrategyTreeEntry) {
+		for _, nh := range entry.nexthops {
+			if nh.Nexthop == faceID {
+				affected = append(affected, entry)
+				return
+			}
+		}
+	})
+
+	for _, entry := range affected {
+		for i, nh := range entry.nexthops {
+			if nh.Nexthop == faceID {
+				if i < len(entry.nexthops)-1 {
+					copy(entry.nexthops[i:], entry.nexthops[i+1:])
+				}
+				entry.nexthops = entry.nexthops[:len(entry.nexthops)-1]
+				break
+			}
+		}
+		entry.pruneIfEmpty()
+	}
 }
 
 // GetAllFIBEntries returns all nexthop entries in the FIB.

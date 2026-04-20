@@ -104,7 +104,11 @@ func NewSvsALO(opts SvsAloOpts) (*SvsALO, error) {
 	if s.opts.Svs.BootTime == 0 {
 		// This is actually done by the SVS instance itself, but we need
 		// it to tell the SyncDataName to SVS ...
-		s.opts.Svs.BootTime = uint64(time.Now().Unix())
+		nowFunc := s.opts.Svs.NowFunc
+		if nowFunc == nil {
+			nowFunc = time.Now
+		}
+		s.opts.Svs.BootTime = uint64(nowFunc().Unix())
 	}
 
 	// Svs.GroupPrefix is actually the Sync prefix
@@ -304,4 +308,9 @@ func (s *SvsALO) onSvsUpdate(update SvSyncUpdate) {
 
 	// Check if we want to queue new fetch for this update.
 	s.consumeCheck(update.Name)
+}
+
+// SuppressionStats returns the SVS suppression statistics.
+func (s *SvsALO) SuppressionStats() SuppressStats {
+	return s.svs.SuppressionStats()
 }
