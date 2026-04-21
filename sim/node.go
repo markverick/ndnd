@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
+	_ndndsim "github.com/named-data/ndndsim"
 	"github.com/named-data/ndnd/dv/config"
 	"github.com/named-data/ndnd/fw/core"
 	"github.com/named-data/ndnd/fw/defn"
@@ -29,6 +31,11 @@ type Node struct {
 
 	// Simulation clock (shared across all nodes, provided by ns-3)
 	clock Clock
+
+	// Per-node simulation hooks (scheduler, clock, FIB, PET, keychain).
+	// All ndnd code running on behalf of this node reads these via
+	// goroutine-local storage after a BindNode call at each CGo boundary.
+	hooks *_ndndsim.NodeHooks
 
 	// Forwarder for this node
 	Forwarder *SimForwarder
@@ -59,27 +66,35 @@ func NewNode(id uint32, clock Clock) *Node {
 	}
 	simInitMu.Unlock()
 
-	// Override the forwarder's global clock to use simulation time.
-	// Without this, PIT expiration, CS freshness, and strategy suppression
-	// all use wall-clock time, which diverges from the simulated time.
-	// In the CGo path, NdndSimInit already sets core.NowFunc before any node
-	// is created (globalRuntime != nil at that point).  Only set it here for
-	// the pure-Go test path where NdndSimInit is never called.
-	// Each test creates a fresh DeterministicClock and calls NewNode, so we
-	// must update NowFunc on every NewNode call (not just the first) so that
-	// subsequent tests in the same binary run point to the current test's clock.
-	if globalRuntime == nil {
-		core.NowFunc = clock.Now
+	// Override the global NDNd clock so that the Content Store (and any other
+	// time-sensitive code that calls core.Now()) uses simulation time instead
+	// of the wall clock. Without this, CS entries created in phase 1 of a test
+	// would still appear "fresh" in phase 2 despite 30s of simulated time
+	// elapsing (because only ~80ms of wall time passes).
+	core.NowFunc = clock.Now
+
+	// Create per-node hooks.  Scheduling defaults to real goroutines;
+	// DV-specific overrides are applied later in StartDv / NewSimDvRouter.
+	hooks := &_ndndsim.NodeHooks{
+		GoFunc: func(f func()) { go f() },
+		AfterFunc: func(d time.Duration, f func()) func() {
+			t := time.AfterFunc(d, f)
+			return func() { t.Stop() }
+		},
+		Now:              clock.Now,
+		Synchronous:      true,
+		EnableFaceEvents: false,
 	}
 
 	n := &Node{
 		id:         id,
 		clock:      clock,
+		hooks:      hooks,
 		ifaceFaces: make(map[uint32]uint64),
 	}
 
-	// Create the forwarder
-	n.Forwarder = NewSimForwarder(clock)
+	// Create the forwarder — this also sets Fib and Pet in the hooks.
+	n.Forwarder = NewSimForwarder(clock, hooks)
 
 	// Create the application-layer timer
 	n.appTimer = NewSimTimer(clock)
@@ -169,7 +184,11 @@ func (n *Node) RemoveNetworkFace(ifIndex uint32) {
 
 // ReceiveOnInterface injects a packet received on an ns-3 network interface.
 // ifIndex == 0xFFFFFFFF is the special app-face interface.
+// Binds this node's hooks for the duration of processing so that goroutine-
+// local simFib/simPet return the correct per-node instances.
 func (n *Node) ReceiveOnInterface(ifIndex uint32, frame []byte) {
+	_ndndsim.BindNode(n.hooks)
+	defer _ndndsim.UnbindNode()
 	if ifIndex == 0xFFFFFFFF {
 		// App face: deliver directly to the forwarder on the app face
 		n.Forwarder.ReceivePacket(n.appFaceID, frame)
@@ -211,6 +230,13 @@ func (n *Node) Engine() ndn.Engine {
 // Clock returns the simulation clock.
 func (n *Node) Clock() Clock {
 	return n.clock
+}
+
+// Hooks returns the per-node simulation hooks.
+// The caller must call ndndsim.BindNode(n.Hooks()) before executing any
+// ndnd code on behalf of this node.
+func (n *Node) Hooks() *_ndndsim.NodeHooks {
+	return n.hooks
 }
 
 // ID returns the node identifier.
@@ -256,12 +282,12 @@ func (n *Node) StartDv(network, router string, cfgJSON string) error {
 	cfg.Store = store
 	cfg.TrustAnchors = anchors
 
-	sdv, err := NewSimDvRouter(n.clock, n.appEngine, cfg)
+	sdv, err := NewSimDvRouter(n.clock, n.appEngine, cfg, n.hooks, n.Forwarder)
 	if err != nil {
 		return err
 	}
 
-	if err := sdv.Start(); err != nil {
+	if err := sdv.Start(n.hooks); err != nil {
 		return err
 	}
 

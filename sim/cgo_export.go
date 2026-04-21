@@ -6,6 +6,7 @@ import (
 	"time"
 	"unsafe"
 
+	_ndndsim "github.com/named-data/ndndsim"
 	dv_table "github.com/named-data/ndnd/dv/table"
 	"github.com/named-data/ndnd/fw/core"
 	enc "github.com/named-data/ndnd/std/encoding"
@@ -350,6 +351,9 @@ func NdndSimReceivePacket(nodeId C.uint32_t, ifIndex C.uint32_t, data unsafe.Poi
 
 	// Copy the data (C++ memory may be freed after this call)
 	frame := C.GoBytes(data, C.int(dataLen))
+	// Bind node hooks so FIB/PET lookups use this node's instances.
+	_ndndsim.BindNode(node.Hooks())
+	defer _ndndsim.UnbindNode()
 	node.ReceiveOnInterface(uint32(ifIndex), frame)
 }
 
@@ -396,6 +400,12 @@ func NdndSimFireEvent(nodeId C.uint32_t, eventId C.uint64_t) {
 		return
 	}
 	clock := val.(*Ns3Clock)
+	// Bind the node's hooks so all ndnd callbacks execute with the correct
+	// per-node state (FIB, PET, clock, scheduler).
+	if node := globalRuntime.GetNode(uint32(nodeId)); node != nil {
+		_ndndsim.BindNode(node.Hooks())
+		defer _ndndsim.UnbindNode()
+	}
 	clock.FireEvent(EventID(eventId))
 }
 
