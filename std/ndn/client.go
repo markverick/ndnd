@@ -129,8 +129,9 @@ type ConsumeExtArgs struct {
 	OnProgress func(status ConsumeState)
 	// NoMetadata disables fetching RDR metadata (advanced usage).
 	NoMetadata bool
-	// IgnoreValidity ignores validity period in the validation chain
-	IgnoreValidity optional.Optional[bool]
+	// OnCertExpired decides whether an expired certificate may be used.
+	// A nil callback rejects expired certificates.
+	OnCertExpired CertExpiredCallback
 }
 
 // ExpressRArgs are the arguments for the express retry API.
@@ -157,6 +158,9 @@ type ExpressRArgs struct {
 type ValidateExtArgs struct {
 	// Data packet to validate.
 	Data Data
+	// RawData is the complete wire encoding of Data. It may be nil when the
+	// caller only has the parsed packet.
+	RawData enc.Wire
 	// Signature covered wire.
 	SigCovered enc.Wire
 	// Callback for the result.
@@ -167,8 +171,9 @@ type ValidateExtArgs struct {
 	CertNextHop optional.Optional[uint64]
 	// UseDataNameFwHint overrides trust config option.
 	UseDataNameFwHint optional.Optional[bool]
-	// IgnoreValidity ignores validity period in the validation chain.
-	IgnoreValidity optional.Optional[bool]
+	// OnCertExpired decides whether an expired certificate may be used.
+	// A nil callback rejects expired certificates.
+	OnCertExpired CertExpiredCallback
 }
 
 // Announcement are the arguments for the announce prefix API.

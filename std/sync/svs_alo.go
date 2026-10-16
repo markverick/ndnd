@@ -131,12 +131,12 @@ func NewSvsALO(opts SvsAloOpts) (*SvsALO, error) {
 		}, s.state)
 	}
 
-	// Overeide IgnoreValidity from SVS (incorect but practical)
+	// Override the certificate expiry callback from SVS (incorrect but practical).
 	if latest, ok := s.opts.Snapshot.(*SnapshotNodeLatest); ok {
-		latest.IgnoreValidity = s.opts.Svs.IgnoreValidity
+		latest.OnCertExpired = s.opts.Svs.OnCertExpired
 	}
 	if history, ok := s.opts.Snapshot.(*SnapshotNodeHistory); ok {
-		history.IgnoreValidity = s.opts.Svs.IgnoreValidity
+		history.OnCertExpired = s.opts.Svs.OnCertExpired
 	}
 
 	return s, nil
@@ -154,7 +154,7 @@ func (s *SvsALO) GroupPrefix() enc.Name {
 
 // SyncPrefix is the sync route prefix for this instance.
 func (s *SvsALO) SyncPrefix() enc.Name {
-	return s.opts.Svs.GroupPrefix
+	return s.svs.SyncPrefix()
 }
 
 // DataPrefix is the data route prefix for this instance.

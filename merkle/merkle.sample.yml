@@ -1,0 +1,15 @@
+merkle:
+  # [required] Name of the Merkle history log service
+  name: /ndnd/merkle
+  # [required] Directory for the packet cache and persistent log
+  storage_dir: /etc/ndn/merkle/storage
+  # Maximum number of committed batches; existing history is never pruned
+  max_entries: 1000000
+  # [required] Keychain URI for security
+  # - Example: dir:///absolute/path/to/keychain
+  keychain: "dir:///etc/ndn/merkle/keys"
+  # [optional] Compiled LVS trust schema; omitted uses NullSchema (digest responses)
+  trust_schema: /etc/ndn/merkle/schema.tlv
+  # [required] Full names of validation trust anchors
+  trust_anchors:
+    - "/ndn/KEY/%27%C4%B2%2A%9F%7B%81%27/ndn/v=1651246789556"

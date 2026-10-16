@@ -65,6 +65,7 @@ func SignCert(args SignCertArgs) (enc.Wire, error) {
 		Freshness:    optional.Some(time.Hour),
 		SigNotBefore: optional.Some(args.NotBefore),
 		SigNotAfter:  optional.Some(args.NotAfter),
+		SigTime:      optional.Some(time.Duration(time.Now().UnixMilli()) * time.Millisecond),
 		CrossSchema:  args.CrossSchema,
 	}
 	signer := sig.AsContextSigner(args.Signer)
@@ -113,6 +114,26 @@ func CertIsExpired(cert ndn.Data) bool {
 	}
 
 	return false
+}
+
+// RejectExpiredCert rejects an expired certificate.
+func RejectExpiredCert(args ndn.CertExpiredCallbackArgs, complete func(error)) {
+	complete(fmt.Errorf("certificate is expired: %s", args.Cert.Name()))
+}
+
+// IgnoreExpiredCert accepts an expired certificate without additional checks.
+func IgnoreExpiredCert(_ ndn.CertExpiredCallbackArgs, complete func(error)) {
+	complete(nil)
+}
+
+// ValidateAtSignatureTime accepts an expired validation chain when each
+// affected Data packet was signed during its Cert's validity period.
+func ValidateAtSignatureTime(args ndn.CertExpiredCallbackArgs, complete func(error)) {
+	if ValidateSigTime(args.Data, args.Cert) {
+		complete(nil)
+		return
+	}
+	complete(fmt.Errorf("data not signed during validity period: %s", args.Cert.Name()))
 }
 
 // getPubKey gets the public key from an NDN data.
@@ -198,4 +219,16 @@ func DecodeCertList(content enc.Wire) ([]enc.Name, error) {
 		return nil, ndn.ErrInvalidValue{Item: "CertList", Value: "empty"}
 	}
 	return names, nil
+}
+
+// AppendCertList appends a certificate name list to a certificate list by creating a new certificate list
+func AppendCertList(content enc.Wire, names []enc.Name) (enc.Wire, error) {
+	certList, err := DecodeCertList(content)
+	if err != nil {
+		return nil, err
+	}
+
+	newList := append(certList, names...)
+
+	return EncodeCertList(newList)
 }

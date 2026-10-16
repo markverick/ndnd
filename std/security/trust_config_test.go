@@ -1,6 +1,7 @@
 package security_test
 
 import (
+	"bytes"
 	"crypto/elliptic"
 	_ "embed"
 	"fmt"
@@ -89,10 +90,10 @@ var tcTestKeyChain ndn.KeyChain = nil
 var tcTestFetchCount int = 0
 
 type ValidateSyncOptions struct {
-	name           string
-	signer         ndn.Signer
-	crossSchema    enc.Wire
-	ignoreValidity bool
+	name          string
+	signer        ndn.Signer
+	crossSchema   enc.Wire
+	onCertExpired ndn.CertExpiredCallback
 }
 
 // Helper to validate a packet synchronously
@@ -104,9 +105,21 @@ func validateSync(opts ValidateSyncOptions) bool {
 	require.NoError(tcTestT, err)
 	data, sigCov, err := spec.Spec{}.ReadData(enc.NewWireView(dataW.Wire))
 	require.NoError(tcTestT, err)
+	onCertExpired := opts.onCertExpired
+	rawDataMismatch := false
+	if onCertExpired != nil {
+		onCertExpired = func(args ndn.CertExpiredCallbackArgs, complete func(error)) {
+			if args.Data.Name().Equal(data.Name()) &&
+				!bytes.Equal(dataW.Wire.Join(), args.RawData.Join()) {
+				rawDataMismatch = true
+			}
+			opts.onCertExpired(args, complete)
+		}
+	}
 	ch := make(chan bool)
 	go tcTestTrustConfig.Validate(sec.TrustConfigValidateArgs{
 		Data:       data,
+		RawData:    dataW.Wire,
 		DataSigCov: sigCov,
 		Fetch:      fetchFun,
 		Callback: func(valid bool, err error) {
@@ -114,13 +127,15 @@ func validateSync(opts ValidateSyncOptions) bool {
 			ch <- valid
 			close(ch)
 		},
-		IgnoreValidity: optional.Some(opts.ignoreValidity),
+		OnCertExpired: onCertExpired,
 	})
-	return <-ch
+	valid := <-ch
+	require.False(tcTestT, rawDataMismatch)
+	return valid
 }
 
 // Helper to validate certificates
-func validateCerts(certData ndn.Data, certDataSigCov enc.Wire, ignoreValidity bool) bool {
+func validateCerts(certData ndn.Data, certDataSigCov enc.Wire, onCertExpired ndn.CertExpiredCallback) bool {
 	ch := make(chan bool)
 	go tcTestTrustConfig.Validate(sec.TrustConfigValidateArgs{
 		Data:       certData,
@@ -131,7 +146,7 @@ func validateCerts(certData ndn.Data, certDataSigCov enc.Wire, ignoreValidity bo
 			ch <- valid
 			close(ch)
 		},
-		IgnoreValidity: optional.Some(ignoreValidity),
+		OnCertExpired: onCertExpired,
 	})
 	return <-ch
 }
@@ -342,10 +357,16 @@ func testTrustConfigIntra(t *testing.T, schema ndn.TrustSchema) {
 
 	// Signing with correct keys
 	tcTestFetchCount = 0
+	expiryCallbackCalled := false
 	require.True(t, validateSync(ValidateSyncOptions{
 		name:   "/test/alice/data1",
 		signer: aliceSigner,
+		onCertExpired: func(_ ndn.CertExpiredCallbackArgs, complete func(error)) {
+			expiryCallbackCalled = true
+			complete(fmt.Errorf("unexpected expiry callback"))
+		},
 	}))
+	require.False(t, expiryCallbackCalled)
 	require.Equal(t, 0, tcTestFetchCount) // have all certificates
 	require.True(t, validateSync(ValidateSyncOptions{
 		name:   "/test/bob/data1",
@@ -528,6 +549,39 @@ func testTrustConfigIntra(t *testing.T, schema ndn.TrustSchema) {
 		signer:      bobSigner,
 		crossSchema: abInvite,
 	}))
+
+	expiredInvite, err := trust_schema.SignCrossSchema(trust_schema.SignCrossSchemaArgs{
+		Name:   sname("/test/alice/32=INVITE/test/bob/v=2"),
+		Signer: aliceSigner,
+		Content: trust_schema.CrossSchemaContent{
+			SimpleSchemaRules: []*trust_schema.SimpleSchemaRule{{
+				NamePrefix: sname("/test/alice/app/test/bob"),
+				KeyLocator: &spec.KeyLocator{Name: sname("/test/bob/KEY")},
+			}},
+		},
+		NotBefore: time.Now().Add(-2 * time.Hour),
+		NotAfter:  time.Now().Add(-time.Hour),
+	})
+	require.NoError(t, err)
+	expiredInviteData, _, err := spec.Spec{}.ReadData(enc.NewWireView(expiredInvite))
+	require.NoError(t, err)
+
+	var crossSchemaExpiryArgs []ndn.CertExpiredCallbackArgs
+	require.True(t, validateSync(ValidateSyncOptions{
+		name:        "/test/alice/app/test/bob/expired-invite",
+		signer:      bobSigner,
+		crossSchema: expiredInvite,
+		onCertExpired: func(args ndn.CertExpiredCallbackArgs, complete func(error)) {
+			crossSchemaExpiryArgs = append(crossSchemaExpiryArgs, args)
+			complete(nil)
+		},
+	}))
+	require.Len(t, crossSchemaExpiryArgs, 2)
+	require.Equal(t, "/test/alice/app/test/bob/expired-invite", crossSchemaExpiryArgs[0].Data.Name().String())
+	require.True(t, expiredInviteData.Name().Equal(crossSchemaExpiryArgs[0].Cert.Name()))
+	require.True(t, expiredInviteData.Name().Equal(crossSchemaExpiryArgs[1].Data.Name()))
+	require.Equal(t, expiredInvite.Join(), crossSchemaExpiryArgs[1].RawData.Join())
+	require.True(t, aliceCertData.Name().Equal(crossSchemaExpiryArgs[1].Cert.Name()))
 
 	require.False(t, validateSync(ValidateSyncOptions{
 		name:        "/test/alice/app/test/alice/data1",
@@ -790,18 +844,33 @@ func testTrustConfigIntra(t *testing.T, schema ndn.TrustSchema) {
 	tcTestT.Log(eveSigner.KeyLocator().String())
 	eveCertWire, eveCertData, eveSigCov := signCert(rootSigner, tu.NoErr(signer.MarshalSecret(eveSigner)), expiredOpts)
 	network[eveCertData.Name().String()] = eveCertWire
-	require.False(t, validateCerts(eveCertData, eveSigCov, false))
-	require.True(t, validateCerts(eveCertData, eveSigCov, true))
+	require.False(t, validateCerts(eveCertData, eveSigCov, nil))
+	require.True(t, validateCerts(eveCertData, eveSigCov, sec.IgnoreExpiredCert))
+	require.True(t, validateCerts(eveCertData, eveSigCov, sec.ValidateAtSignatureTime))
 	require.False(t, validateSync(ValidateSyncOptions{
-		name:           "/test/eve/data1",
-		signer:         eveSigner,
-		ignoreValidity: false,
+		name:   "/test/eve/data1",
+		signer: eveSigner,
 	}))
 	require.True(t, validateSync(ValidateSyncOptions{
-		name:           "/test/eve/data2",
-		signer:         eveSigner,
-		ignoreValidity: true,
+		name:          "/test/eve/data2",
+		signer:        eveSigner,
+		onCertExpired: sec.IgnoreExpiredCert,
 	}))
+	var callbackArgs []ndn.CertExpiredCallbackArgs
+	require.True(t, validateSync(ValidateSyncOptions{
+		name:   "/test/eve/data3",
+		signer: eveSigner,
+		onCertExpired: func(args ndn.CertExpiredCallbackArgs, complete func(error)) {
+			callbackArgs = append(callbackArgs, args)
+			go complete(nil)
+		},
+	}))
+	require.Len(t, callbackArgs, 2)
+	require.Equal(t, "/test/eve/data3", callbackArgs[0].Data.Name().String())
+	require.True(t, eveCertData.Name().Equal(callbackArgs[0].Cert.Name()))
+	require.True(t, eveCertData.Name().Equal(callbackArgs[1].Data.Name()))
+	require.Equal(t, eveCertWire.Join(), callbackArgs[1].RawData.Join())
+	require.True(t, rootCertData.Name().Equal(callbackArgs[1].Cert.Name()))
 }
 
 // This is intended as the ultimate inter-domain trust config test.
@@ -902,7 +971,7 @@ func testTrustConfigInter(t *testing.T, schema ndn.TrustSchema) {
 		NotBefore: nb,
 		NotAfter:  na,
 	}))
-	userCertData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(userCertWire))
+	userCertData, userCertSigCov, _ := spec.Spec{}.ReadData(enc.NewWireView(userCertWire))
 
 	payload := enc.Wire{[]byte{0x01}}
 	dataWire := tu.NoErr(spec.Spec{}.MakeData(n("/app/user/alice/data"), &ndn.DataConfig{
@@ -960,7 +1029,12 @@ func testTrustConfigInter(t *testing.T, schema ndn.TrustSchema) {
 		},
 	}
 
-	validateOnce := func(trust *sec.TrustConfig, data ndn.Data, sigCov enc.Wire) (bool, error) {
+	validateWithPolicy := func(
+		trust *sec.TrustConfig,
+		data ndn.Data,
+		sigCov enc.Wire,
+		onCertExpired ndn.CertExpiredCallback,
+	) (bool, error) {
 		tcTestFetchCount = 0
 		done := make(chan struct {
 			v   bool
@@ -976,9 +1050,13 @@ func testTrustConfigInter(t *testing.T, schema ndn.TrustSchema) {
 					err error
 				}{v: valid, err: err}
 			},
+			OnCertExpired: onCertExpired,
 		})
 		res := <-done
 		return res.v, res.err
+	}
+	validateOnce := func(trust *sec.TrustConfig, data ndn.Data, sigCov enc.Wire) (bool, error) {
+		return validateWithPolicy(trust, data, sigCov, nil)
 	}
 
 	for _, st := range stages {
@@ -1020,6 +1098,288 @@ func testTrustConfigInter(t *testing.T, schema ndn.TrustSchema) {
 			}
 		})
 	}
+
+	t.Run("cached intermediate revalidates expired parent", func(t *testing.T) {
+		clear(network)
+
+		ownerExpiry := time.Now().Add(2 * time.Second)
+		expiringOwnerWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+			Signer:    rootSigner,
+			Data:      ownerKeyData,
+			IssuerId:  enc.NewGenericComponent("root-expiring"),
+			NotBefore: time.Now().Add(-time.Minute),
+			NotAfter:  ownerExpiry,
+		}))
+		expiringOwnerData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(expiringOwnerWire))
+
+		freshPreAnchorWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+			Signer:    ownerSigner,
+			Data:      anchorKeyData,
+			IssuerId:  enc.NewGenericComponent("owner-fresh"),
+			NotBefore: time.Now().Add(-time.Minute),
+			NotAfter:  time.Now().Add(time.Hour),
+		}))
+		freshPreAnchorData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(freshPreAnchorWire))
+
+		store := storage.NewMemoryStore()
+		tcTestKeyChain = keychain.NewKeyChainMem(store)
+		require.NoError(t, tcTestKeyChain.InsertCert(rootCertWire.Join()))
+		trust, err := sec.NewTrustConfig(tcTestKeyChain, schema, []enc.Name{rootCertData.Name()})
+		require.NoError(t, err)
+
+		network[freshPreAnchorData.Name().String()] = freshPreAnchorWire
+		network[expiringOwnerData.Name().String()] = expiringOwnerWire
+
+		valid, err := validateWithPolicy(trust, userCertData, userCertSigCov, nil)
+		require.True(t, valid)
+		require.NoError(t, err)
+		clear(network)
+		require.NoError(t, tcTestKeyChain.Store().Remove(freshPreAnchorData.Name()))
+		require.NoError(t, tcTestKeyChain.Store().Remove(expiringOwnerData.Name()))
+
+		time.Sleep(time.Until(ownerExpiry) + 100*time.Millisecond)
+
+		var expiryArgs []ndn.CertExpiredCallbackArgs
+		valid, err = validateWithPolicy(trust, userCertData, userCertSigCov,
+			func(args ndn.CertExpiredCallbackArgs, complete func(error)) {
+				expiryArgs = append(expiryArgs, args)
+				complete(fmt.Errorf("expired parent"))
+			})
+		require.False(t, valid)
+		require.Error(t, err)
+		require.Len(t, expiryArgs, 1)
+		require.True(t, freshPreAnchorData.Name().Equal(expiryArgs[0].Data.Name()))
+		require.Equal(t, freshPreAnchorWire.Join(), expiryArgs[0].RawData.Join())
+		require.True(t, expiringOwnerData.Name().Equal(expiryArgs[0].Cert.Name()))
+		require.Equal(t, 0, tcTestFetchCount)
+	})
+
+	t.Run("certlist target must contain anchor key", func(t *testing.T) {
+		clear(network)
+
+		maliciousAnchorSigner := tu.NoErr(signer.KeygenEd25519(anchorSigner.KeyName()))
+		maliciousAnchorKeyData := tu.NoErr(signer.MarshalSecretToData(maliciousAnchorSigner))
+		maliciousAnchorWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+			Signer:    maliciousAnchorSigner,
+			Data:      maliciousAnchorKeyData,
+			IssuerId:  enc.NewGenericComponent("malicious-self"),
+			NotBefore: nb,
+			NotAfter:  na,
+		}))
+		maliciousAnchorData, maliciousAnchorSigCov, _ := spec.Spec{}.ReadData(enc.NewWireView(maliciousAnchorWire))
+
+		maliciousListContent := tu.NoErr(sec.EncodeCertList([]enc.Name{preAnchorData.Name()}))
+		maliciousListName := listPrefix.Append(enc.NewVersionComponent(uint64(time.Now().UnixMicro())))
+		maliciousListWire := tu.NoErr(spec.Spec{}.MakeData(maliciousListName, &ndn.DataConfig{
+			Freshness: optional.Some(time.Minute),
+		}, maliciousListContent, maliciousAnchorSigner))
+
+		store := storage.NewMemoryStore()
+		tcTestKeyChain = keychain.NewKeyChainMem(store)
+		require.NoError(t, tcTestKeyChain.InsertCert(rootCertWire.Join()))
+		trust, err := sec.NewTrustConfig(tcTestKeyChain, schema, []enc.Name{rootCertData.Name()})
+		require.NoError(t, err)
+
+		network[maliciousListName.String()] = maliciousListWire.Wire
+		network[preAnchorData.Name().String()] = preAnchorWire
+		network[ownerCertData.Name().String()] = ownerCertWire
+
+		valid, err := validateWithPolicy(trust, maliciousAnchorData, maliciousAnchorSigCov, nil)
+		require.False(t, valid)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "no chain")
+	})
+
+	t.Run("rejected certlist candidate does not taint next candidate", func(t *testing.T) {
+		clear(network)
+
+		expiredCandidateWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+			Signer:    ownerSigner,
+			Data:      anchorKeyData,
+			IssuerId:  enc.NewGenericComponent("expired-first"),
+			NotBefore: time.Now().Add(-2 * time.Hour),
+			NotAfter:  time.Now().Add(-time.Hour),
+		}))
+		expiredCandidateData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(expiredCandidateWire))
+		candidateListContent := tu.NoErr(sec.EncodeCertList([]enc.Name{
+			expiredCandidateData.Name(),
+			preAnchorData.Name(),
+		}))
+		candidateListName := listPrefix.Append(enc.NewVersionComponent(uint64(time.Now().UnixMicro())))
+		candidateListWire := tu.NoErr(spec.Spec{}.MakeData(candidateListName, &ndn.DataConfig{
+			Freshness: optional.Some(time.Minute),
+		}, candidateListContent, anchorSigner))
+
+		store := storage.NewMemoryStore()
+		tcTestKeyChain = keychain.NewKeyChainMem(store)
+		require.NoError(t, tcTestKeyChain.InsertCert(rootCertWire.Join()))
+		trust, err := sec.NewTrustConfig(tcTestKeyChain, schema, []enc.Name{rootCertData.Name()})
+		require.NoError(t, err)
+
+		network[candidateListName.String()] = candidateListWire.Wire
+		network[expiredCandidateData.Name().String()] = expiredCandidateWire
+		network[preAnchorData.Name().String()] = preAnchorWire
+		network[ownerCertData.Name().String()] = ownerCertWire
+
+		policyCalls := 0
+		valid, err := validateWithPolicy(trust, anchorCertData, anchorSigCov,
+			func(_ ndn.CertExpiredCallbackArgs, complete func(error)) {
+				policyCalls++
+				complete(fmt.Errorf("reject first candidate"))
+			})
+		require.True(t, valid)
+		require.NoError(t, err)
+		require.Equal(t, 1, policyCalls)
+
+		clear(network)
+		require.NoError(t, tcTestKeyChain.Store().Remove(preAnchorData.Name()))
+		require.NoError(t, tcTestKeyChain.Store().Remove(ownerCertData.Name()))
+		valid, err = validateWithPolicy(trust, anchorCertData, anchorSigCov, nil)
+		require.True(t, valid)
+		require.NoError(t, err)
+		require.Equal(t, 0, tcTestFetchCount)
+	})
+
+	t.Run("cached expired certlist target", func(t *testing.T) {
+		clear(network)
+
+		preAnchorExpiry := time.Now().Add(2 * time.Second)
+		expiredPreAnchorTemplate := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+			Signer:    ownerSigner,
+			Data:      anchorKeyData,
+			IssuerId:  enc.NewGenericComponent("expired-owner"),
+			NotBefore: now.Add(-time.Hour),
+			NotAfter:  preAnchorExpiry,
+		}))
+		expiredPreAnchorTemplateData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(expiredPreAnchorTemplate))
+		expiredPreAnchorEncoded := tu.NoErr(spec.Spec{}.MakeData(
+			expiredPreAnchorTemplateData.Name(),
+			&ndn.DataConfig{
+				ContentType:  optional.Some(ndn.ContentTypeKey),
+				Freshness:    optional.Some(time.Hour),
+				SigNotBefore: optional.Some(now.Add(-time.Hour)),
+				SigNotAfter:  optional.Some(preAnchorExpiry),
+				SigTime:      optional.Some(time.Duration(now.Add(-30*time.Minute).UnixMilli()) * time.Millisecond),
+			},
+			expiredPreAnchorTemplateData.Content(),
+			signer.AsContextSigner(ownerSigner),
+		))
+		expiredPreAnchorWire := expiredPreAnchorEncoded.Wire
+		expiredPreAnchorData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(expiredPreAnchorWire))
+
+		expiredListContent := tu.NoErr(sec.EncodeCertList([]enc.Name{expiredPreAnchorData.Name()}))
+		expiredListName := listPrefix.Append(enc.NewVersionComponent(uint64(time.Now().UnixMicro())))
+		expiredListWire := tu.NoErr(spec.Spec{}.MakeData(expiredListName, &ndn.DataConfig{
+			Freshness: optional.Some(time.Minute),
+		}, expiredListContent, anchorSigner))
+		expiredListData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(expiredListWire.Wire))
+
+		store := storage.NewMemoryStore()
+		tcTestKeyChain = keychain.NewKeyChainMem(store)
+		require.NoError(t, tcTestKeyChain.InsertCert(rootCertWire.Join()))
+		trust, err := sec.NewTrustConfig(tcTestKeyChain, schema, []enc.Name{rootCertData.Name()})
+		require.NoError(t, err)
+
+		network[expiredPreAnchorData.Name().String()] = expiredPreAnchorWire
+		network[ownerCertData.Name().String()] = ownerCertWire
+		network[expiredListName.String()] = expiredListWire.Wire
+
+		// Cache the target while it is fresh, then let it expire.
+		valid, err := validateWithPolicy(trust, userCertData, userCertSigCov, nil)
+		require.True(t, valid)
+		require.NoError(t, err)
+		time.Sleep(time.Until(preAnchorExpiry) + 100*time.Millisecond)
+
+		var rejectedExpiryArgs []ndn.CertExpiredCallbackArgs
+		rejectExpired := func(args ndn.CertExpiredCallbackArgs, complete func(error)) {
+			rejectedExpiryArgs = append(rejectedExpiryArgs, args)
+			if len(rejectedExpiryArgs) == 1 {
+				complete(nil)
+				return
+			}
+			complete(fmt.Errorf("expired certlist target chain"))
+		}
+		valid, err = validateWithPolicy(trust, anchorCertData, anchorSigCov, rejectExpired)
+		require.False(t, valid)
+		require.Error(t, err)
+		require.Len(t, rejectedExpiryArgs, 2)
+		require.True(t, expiredListData.Name().Equal(rejectedExpiryArgs[0].Data.Name()))
+		require.Equal(t, expiredListWire.Wire.Join(), rejectedExpiryArgs[0].RawData.Join())
+		require.True(t, expiredPreAnchorData.Name().Equal(rejectedExpiryArgs[0].Cert.Name()))
+		require.True(t, expiredPreAnchorData.Name().Equal(rejectedExpiryArgs[1].Data.Name()))
+		require.Equal(t, expiredPreAnchorWire.Join(), rejectedExpiryArgs[1].RawData.Join())
+		require.True(t, ownerCertData.Name().Equal(rejectedExpiryArgs[1].Cert.Name()))
+		require.Equal(t, 1, tcTestFetchCount) // CertList; target certificate is reloaded locally.
+
+		var expiryArgs []ndn.CertExpiredCallbackArgs
+		validateAtSignatureTime := func(args ndn.CertExpiredCallbackArgs, complete func(error)) {
+			expiryArgs = append(expiryArgs, args)
+			sec.ValidateAtSignatureTime(args, complete)
+		}
+		valid, err = validateWithPolicy(trust, anchorCertData, anchorSigCov, validateAtSignatureTime)
+		require.False(t, valid)
+		require.Error(t, err)
+		require.Len(t, expiryArgs, 2)
+		require.True(t, expiredListData.Name().Equal(expiryArgs[0].Data.Name()))
+		require.Equal(t, expiredListWire.Wire.Join(), expiryArgs[0].RawData.Join())
+		require.True(t, expiredPreAnchorData.Name().Equal(expiryArgs[0].Cert.Name()))
+		require.True(t, expiredPreAnchorData.Name().Equal(expiryArgs[1].Data.Name()))
+		require.Equal(t, expiredPreAnchorWire.Join(), expiryArgs[1].RawData.Join())
+		require.True(t, ownerCertData.Name().Equal(expiryArgs[1].Cert.Name()))
+		require.Equal(t, 0, tcTestFetchCount) // CertList is cached; target is reloaded locally.
+
+		valid, err = validateWithPolicy(trust, anchorCertData, anchorSigCov, sec.IgnoreExpiredCert)
+		require.True(t, valid)
+		require.NoError(t, err)
+		require.Equal(t, 0, tcTestFetchCount)
+
+		// Accepting the expired relationship establishes the anchor for later
+		// validations without replaying its historical certification path.
+		valid, err = validateWithPolicy(trust, anchorCertData, anchorSigCov, nil)
+		require.True(t, valid)
+		require.NoError(t, err)
+	})
+
+	t.Run("expired certlist target checks list signature time", func(t *testing.T) {
+		clear(network)
+
+		expiredPreAnchorWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+			Signer:    ownerSigner,
+			Data:      anchorKeyData,
+			IssuerId:  enc.NewGenericComponent("expired-list-signer"),
+			NotBefore: time.Now().Add(-2 * time.Hour),
+			NotAfter:  time.Now().Add(-time.Hour),
+		}))
+		expiredPreAnchorData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(expiredPreAnchorWire))
+		certListContent := tu.NoErr(sec.EncodeCertList([]enc.Name{expiredPreAnchorData.Name()}))
+		certListName := listPrefix.Append(enc.NewVersionComponent(uint64(time.Now().UnixMicro())))
+		certListWire := tu.NoErr(spec.Spec{}.MakeData(certListName, &ndn.DataConfig{
+			Freshness: optional.Some(time.Minute),
+		}, certListContent, anchorSigner))
+		certListData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(certListWire.Wire))
+
+		store := storage.NewMemoryStore()
+		tcTestKeyChain = keychain.NewKeyChainMem(store)
+		require.NoError(t, tcTestKeyChain.InsertCert(rootCertWire.Join()))
+		trust, err := sec.NewTrustConfig(tcTestKeyChain, schema, []enc.Name{rootCertData.Name()})
+		require.NoError(t, err)
+
+		network[expiredPreAnchorData.Name().String()] = expiredPreAnchorWire
+		network[ownerCertData.Name().String()] = ownerCertWire
+		network[certListData.Name().String()] = certListWire.Wire
+
+		var expiryArgs []ndn.CertExpiredCallbackArgs
+		valid, err := validateWithPolicy(trust, anchorCertData, anchorSigCov,
+			func(args ndn.CertExpiredCallbackArgs, complete func(error)) {
+				expiryArgs = append(expiryArgs, args)
+				sec.ValidateAtSignatureTime(args, complete)
+			})
+		require.False(t, valid)
+		require.Error(t, err)
+		require.Len(t, expiryArgs, 1)
+		require.True(t, certListData.Name().Equal(expiryArgs[0].Data.Name()))
+		require.True(t, expiredPreAnchorData.Name().Equal(expiryArgs[0].Cert.Name()))
+	})
 }
 
 // (AI GENERATED DESCRIPTION): Initializes an in‑memory store and key chain, loads an LVS trust schema, and runs trust configuration tests.
@@ -1043,4 +1403,388 @@ func TestTrustConfigLvsInter(t *testing.T) {
 	require.NoError(t, err)
 
 	testTrustConfigInter(t, schemaInter)
+}
+
+func TestSignatureTimeValidationFlows(t *testing.T) {
+	tu.SetT(t)
+
+	// Use intra-domain schema with root-to-root signing support
+	// This schema is the same as TRUST_CONFIG_INTER_LVS but allows roots to sign each other
+	schema, err := trust_schema.NewLvsSchema(TRUST_CONFIG_INTER_LVS)
+	require.NoError(t, err)
+
+	clear(tcTestNetwork)
+	tcTestT = t
+	network := tcTestNetwork
+
+	now := time.Now()
+	nb := now
+	na := now.Add(time.Second * 5)
+	n := func(s string) enc.Name { return tu.NoErr(enc.NameFromStr(s)) }
+
+	// Expired root (old root)
+	expiredRootSigner := tu.NoErr(signer.KeygenEd25519(sec.MakeKeyName(n("/root"))))
+	expiredRootKeyData := tu.NoErr(signer.MarshalSecretToData(expiredRootSigner))
+	expiredRootCertWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+		Signer:    expiredRootSigner,
+		Data:      expiredRootKeyData,
+		IssuerId:  enc.NewGenericComponent("self"),
+		NotBefore: nb,
+		NotAfter:  now.Add(time.Second * 7), // Expires in 7 seconds
+	}))
+	expiredRootCertData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(expiredRootCertWire))
+	network[expiredRootCertData.Name().String()] = expiredRootCertWire
+
+	// New root (replacement root)
+	newRootSigner := tu.NoErr(signer.KeygenEd25519(sec.MakeKeyName(n("/root"))))
+	newRootKeyData := tu.NoErr(signer.MarshalSecretToData(newRootSigner))
+	newRootCertWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+		Signer:    newRootSigner,
+		Data:      newRootKeyData,
+		IssuerId:  enc.NewGenericComponent("self"),
+		NotBefore: nb,
+		NotAfter:  now.Add(time.Second * 17),
+	}))
+	newRootCertData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(newRootCertWire))
+	network[newRootCertData.Name().String()] = newRootCertWire
+
+	// PreAnchor: replacement certificate for expired root's key, signed by new root
+	// This certificate verifies/authorizes the expired root's key
+	expiredRootVerifCertWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+		Signer:    newRootSigner,      // Signed by new root
+		Data:      expiredRootKeyData, // Certificate for expired root's key
+		IssuerId:  enc.NewGenericComponent("root"),
+		NotBefore: nb,
+		NotAfter:  now.Add(time.Second * 15),
+	}))
+	expiredRootVerifCertData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(expiredRootVerifCertWire))
+
+	// CertList for expired root pointing to preAnchor
+	// This CertList is signed by the expired root itself
+	expiredRootCertListContent := tu.NoErr(sec.EncodeCertList([]enc.Name{expiredRootVerifCertData.Name()}))
+	expiredRootCertListPrefix := tu.NoErr(sec.CertListPrefix(expiredRootSigner.KeyName()))
+	expiredRootCertListName := expiredRootCertListPrefix.Append(enc.NewVersionComponent(uint64(now.UnixMicro())))
+	expiredRootCertListWire := tu.NoErr(spec.Spec{}.MakeData(expiredRootCertListName, &ndn.DataConfig{
+		Freshness:    optional.Some(time.Second * 19),
+		SigNotBefore: optional.Some(nb),
+		SigNotAfter:  optional.Some(na),
+	}, expiredRootCertListContent, expiredRootSigner)) // Signed by expired root
+	expiredRootCertListData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(expiredRootCertListWire.Wire))
+
+	// Owner <= testbed
+	ownerSigner := tu.NoErr(signer.KeygenEd25519(sec.MakeKeyName(n("/root/owner"))))
+	ownerKeyData := tu.NoErr(signer.MarshalSecretToData(ownerSigner))
+	ownerCertWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+		Signer:    expiredRootSigner,
+		Data:      ownerKeyData,
+		IssuerId:  enc.NewGenericComponent("root"),
+		NotBefore: nb,
+		NotAfter:  na,
+	}))
+	ownerCertData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(ownerCertWire))
+
+	// Workspace anchor (cert)
+	anchorSigner := tu.NoErr(signer.KeygenEd25519(sec.MakeKeyName(n("/app"))))
+	anchorKeyData := tu.NoErr(signer.MarshalSecretToData(anchorSigner))
+	anchorCertWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+		Signer:    anchorSigner,
+		Data:      anchorKeyData,
+		IssuerId:  enc.NewGenericComponent("self"),
+		NotBefore: nb,
+		NotAfter:  na,
+	}))
+	anchorCertData, anchorSigCov, _ := spec.Spec{}.ReadData(enc.NewWireView(anchorCertWire))
+
+	// Workspace preanchor (precert)
+	preAnchorWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+		Signer:    ownerSigner,
+		Data:      anchorKeyData,
+		IssuerId:  enc.NewGenericComponent("owner"),
+		NotBefore: nb,
+		NotAfter:  na,
+	}))
+	preAnchorData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(preAnchorWire))
+
+	listContent := tu.NoErr(sec.EncodeCertList([]enc.Name{preAnchorData.Name()}))
+	listPrefix := tu.NoErr(sec.CertListPrefix(anchorSigner.KeyName()))
+	listName := listPrefix.Append(enc.NewVersionComponent(uint64(time.Now().UnixMicro())))
+	listWireEnc := tu.NoErr(spec.Spec{}.MakeData(listName, &ndn.DataConfig{
+		Freshness:    optional.Some(time.Minute),
+		SigNotBefore: optional.Some(nb),
+		SigNotAfter:  optional.Some(na),
+	}, listContent, anchorSigner))
+	listData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(listWireEnc.Wire))
+
+	aliceSigner := tu.NoErr(signer.KeygenEd25519(sec.MakeKeyName(n("/app/user/alice"))))
+	aliceKeyData := tu.NoErr(signer.MarshalSecretToData(aliceSigner))
+	aliceCertWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+		Signer:    anchorSigner,
+		Data:      aliceKeyData,
+		IssuerId:  enc.NewGenericComponent("app"),
+		NotBefore: nb,
+		NotAfter:  na,
+	}))
+	aliceCertData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(aliceCertWire))
+
+	expiredSigner := tu.NoErr(signer.KeygenEd25519(sec.MakeKeyName(n("/app/user/alice_expired"))))
+	expiredKeyData := tu.NoErr(signer.MarshalSecretToData(expiredSigner))
+	expiredCertWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+		Signer:    anchorSigner,
+		Data:      expiredKeyData,
+		IssuerId:  enc.NewGenericComponent("app"),
+		NotBefore: now.Add(-2 * time.Hour),
+		NotAfter:  now.Add(-1 * time.Hour),
+	}))
+	expiredCertData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(expiredCertWire))
+
+	// User data
+	payload := enc.Wire{[]byte{0x01}}
+	dataWire := tu.NoErr(spec.Spec{}.MakeData(n("/app/user/alice/data"), &ndn.DataConfig{
+		Freshness: optional.Some(time.Minute),
+	}, payload, aliceSigner))
+	dataPkt, dataSigCov, _ := spec.Spec{}.ReadData(enc.NewWireView(dataWire.Wire))
+
+	// User data with invalid signature time
+	sigTimeBeforeUserCert := optional.Some(time.Duration(now.Add(-time.Hour).UnixMilli()) * time.Millisecond)
+	dataWireInvalidSigTime := tu.NoErr(spec.Spec{}.MakeData(n("/app/user/alice_expired/data"), &ndn.DataConfig{
+		Freshness: optional.Some(time.Minute),
+		SigTime:   sigTimeBeforeUserCert,
+	}, payload, expiredSigner))
+	dataPktInvalidSigTime, dataSigCovInvalidSigTime, _ := spec.Spec{}.ReadData(enc.NewWireView(dataWireInvalidSigTime.Wire))
+
+	bobSigner := tu.NoErr(signer.KeygenEd25519(sec.MakeKeyName(n("/app/user/bob"))))
+	bobKeyData := tu.NoErr(signer.MarshalSecretToData(bobSigner))
+	bobCertWire := tu.NoErr(sec.SignCert(sec.SignCertArgs{
+		Signer:    anchorSigner,
+		Data:      bobKeyData,
+		IssuerId:  enc.NewGenericComponent("app"),
+		NotBefore: nb,
+		NotAfter:  na,
+	}))
+	bobCertData, _, _ := spec.Spec{}.ReadData(enc.NewWireView(bobCertWire))
+	network[bobCertData.Name().String()] = bobCertWire
+
+	abInvite, err := trust_schema.SignCrossSchema(trust_schema.SignCrossSchemaArgs{
+		Name:   sname("/app/user/alice/32=INVITE/app/user/bob/v=1"),
+		Signer: aliceSigner,
+		Content: trust_schema.CrossSchemaContent{
+			SimpleSchemaRules: []*trust_schema.SimpleSchemaRule{{
+				NamePrefix: sname("/app/user/alice/app/bob"),
+				KeyLocator: &spec.KeyLocator{Name: sname("/app/bob/KEY")}, // any key from bob
+			}},
+		},
+		NotBefore: time.Now().Add(time.Second * 7),
+		NotAfter:  time.Now().Add(time.Second * 12),
+	})
+	require.NoError(t, err)
+
+	dataWireInvalidSigTimeCrossSchema := tu.NoErr(spec.Spec{}.MakeData(n("/app/user/alice/app/bob/data"), &ndn.DataConfig{
+		Freshness:   optional.Some(time.Minute),
+		SigTime:     optional.Some(time.Duration(now.UnixMilli()) * time.Millisecond),
+		CrossSchema: abInvite,
+	}, payload, bobSigner))
+	dataPktInvalidSigTimeCrossSchema, dataSigCovInvalidSigTimeCrossSchema, _ := spec.Spec{}.ReadData(enc.NewWireView(dataWireInvalidSigTimeCrossSchema.Wire))
+
+	require.True(t, schema.Check(anchorCertData.Name(), anchorCertData.Name()))
+	require.True(t, schema.Check(preAnchorData.Name(), ownerCertData.Name()))
+	require.True(t, schema.Check(listData.Name(), anchorCertData.Name()))
+	require.True(t, schema.Check(aliceCertData.Name(), anchorCertData.Name()))
+	require.True(t, schema.Check(dataPkt.Name(), aliceCertData.Name()))
+	require.True(t, schema.Check(dataPktInvalidSigTime.Name(), expiredCertData.Name()))
+
+	network[anchorCertData.Name().String()] = anchorCertWire
+	network[aliceCertData.Name().String()] = aliceCertWire
+	network[expiredCertData.Name().String()] = expiredCertWire
+	network[ownerCertData.Name().String()] = ownerCertWire
+
+	type stage struct {
+		preprocess    func()
+		name          string
+		add           map[string]enc.Wire
+		kcInsert      []enc.Wire
+		trustAnchors  []enc.Name
+		data          ndn.Data
+		dataSigCov    enc.Wire
+		expectAnchor  bool
+		expectData    bool
+		expectErrPart string
+	}
+
+	validateOnce := func(trust *sec.TrustConfig, data ndn.Data, sigCov enc.Wire) (bool, error) {
+		tcTestFetchCount = 0
+		done := make(chan struct {
+			v   bool
+			err error
+		}, 1)
+		trust.Validate(sec.TrustConfigValidateArgs{
+			Data:       data,
+			DataSigCov: sigCov,
+			Fetch:      fetchFun,
+			Callback: func(valid bool, err error) {
+				done <- struct {
+					v   bool
+					err error
+				}{v: valid, err: err}
+			},
+
+			OnCertExpired: sec.ValidateAtSignatureTime,
+		})
+		res := <-done
+		return res.v, res.err
+	}
+
+	stages := []stage{
+		// Validate flows before the expired root is replaced
+		{
+			preprocess: func() {
+				return
+			},
+			name: "normal no certlist ok",
+			add: map[string]enc.Wire{
+				listData.Name().String():      listWireEnc.Wire,
+				preAnchorData.Name().String(): preAnchorWire,
+			},
+			kcInsert:     []enc.Wire{expiredRootCertWire, newRootCertWire},
+			trustAnchors: []enc.Name{expiredRootCertData.Name(), newRootCertData.Name()},
+			expectAnchor: true,
+			expectData:   true,
+		},
+		{
+			preprocess: func() {
+				return
+			},
+			name: "normal chain certlist ok",
+			add: map[string]enc.Wire{
+				expiredRootCertListData.Name().String():  expiredRootCertListWire.Wire,
+				expiredRootVerifCertData.Name().String(): expiredRootVerifCertWire,
+				listData.Name().String():                 listWireEnc.Wire,
+				preAnchorData.Name().String():            preAnchorWire,
+			},
+			kcInsert:     []enc.Wire{newRootCertWire},
+			trustAnchors: []enc.Name{newRootCertData.Name()},
+			expectAnchor: true,
+			expectData:   true,
+		},
+		{
+			preprocess: func() {
+				return
+			},
+			name: "data signed when user cert invalid",
+			add: map[string]enc.Wire{
+				expiredRootCertListData.Name().String():  expiredRootCertListWire.Wire,
+				expiredRootVerifCertData.Name().String(): expiredRootVerifCertWire,
+				listData.Name().String():                 listWireEnc.Wire,
+				preAnchorData.Name().String():            preAnchorWire,
+			},
+			kcInsert:      []enc.Wire{expiredRootCertWire, newRootCertWire},
+			trustAnchors:  []enc.Name{expiredRootCertData.Name(), newRootCertData.Name()},
+			data:          dataPktInvalidSigTime,
+			dataSigCov:    dataSigCovInvalidSigTime,
+			expectAnchor:  true,
+			expectData:    false,
+			expectErrPart: "data not signed during validity period",
+		},
+		{
+			preprocess: func() {
+				return
+			},
+			name: "data signed when cross schema invalid",
+			add: map[string]enc.Wire{
+				expiredRootCertListData.Name().String():  expiredRootCertListWire.Wire,
+				expiredRootVerifCertData.Name().String(): expiredRootVerifCertWire,
+				listData.Name().String():                 listWireEnc.Wire,
+				preAnchorData.Name().String():            preAnchorWire,
+			},
+			kcInsert:      []enc.Wire{expiredRootCertWire, newRootCertWire},
+			trustAnchors:  []enc.Name{expiredRootCertData.Name(), newRootCertData.Name()},
+			data:          dataPktInvalidSigTimeCrossSchema,
+			dataSigCov:    dataSigCovInvalidSigTimeCrossSchema,
+			expectAnchor:  true,
+			expectData:    false,
+			expectErrPart: "data not signed during validity period",
+		},
+
+		// Validate flows after the expired root is replaced
+		{
+			preprocess: func() {
+				time.Sleep(time.Second * 9) // Wait for expiration
+			},
+			name: "expired chain certlist ok",
+			add: map[string]enc.Wire{
+				expiredRootCertListData.Name().String():  expiredRootCertListWire.Wire,
+				expiredRootVerifCertData.Name().String(): expiredRootVerifCertWire,
+				listData.Name().String():                 listWireEnc.Wire,
+				preAnchorData.Name().String():            preAnchorWire,
+			},
+			kcInsert:     []enc.Wire{newRootCertWire},
+			trustAnchors: []enc.Name{newRootCertData.Name()},
+			expectAnchor: true,
+			expectData:   true,
+		},
+		{
+			preprocess: func() {
+				// Remove the certlist and certificate from the network to simulate a fully expired chain
+				delete(network, expiredRootCertListData.Name().String())
+				delete(network, expiredRootVerifCertData.Name().String())
+			},
+			name:         "expired chain no certlist not ok",
+			add:          map[string]enc.Wire{listData.Name().String(): listWireEnc.Wire, preAnchorData.Name().String(): preAnchorWire},
+			kcInsert:     []enc.Wire{newRootCertWire},
+			trustAnchors: []enc.Name{newRootCertData.Name()},
+			expectAnchor: false,
+			expectData:   false,
+		},
+	}
+
+	for _, st := range stages {
+		st.preprocess()
+
+		t.Run(st.name, func(t *testing.T) {
+			store := storage.NewMemoryStore()
+			tcTestKeyChain = keychain.NewKeyChainMem(store)
+			kc := tcTestKeyChain
+
+			for k, v := range st.add {
+				network[k] = v
+			}
+
+			for _, w := range st.kcInsert {
+				require.NoError(t, kc.InsertCert(w.Join()))
+			}
+			trust, err := sec.NewTrustConfig(kc, schema, st.trustAnchors)
+			require.NoError(t, err)
+
+			validateData := dataPkt
+			validateSigCov := dataSigCov
+			if st.data != nil {
+				validateData = st.data
+				validateSigCov = st.dataSigCov
+			}
+
+			// Validate anchor cert first, then user data.
+			anchorValid, anchorErr := validateOnce(trust, anchorCertData, anchorSigCov)
+			dataValid, dataErr := validateOnce(trust, validateData, validateSigCov)
+			if st.expectData {
+				require.True(t, dataValid)
+				require.NoError(t, dataErr)
+			} else {
+				require.False(t, dataValid)
+				require.Error(t, dataErr)
+				if st.expectErrPart != "" {
+					require.Contains(t, dataErr.Error(), st.expectErrPart)
+				}
+			}
+
+			if st.expectAnchor {
+				require.True(t, anchorValid)
+				require.NoError(t, anchorErr)
+			} else {
+				require.False(t, anchorValid)
+				require.Error(t, anchorErr)
+				if st.expectErrPart != "" {
+					require.Contains(t, anchorErr.Error(), st.expectErrPart)
+				}
+			}
+		})
+	}
 }

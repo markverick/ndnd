@@ -269,6 +269,9 @@ func TestRoute(t *testing.T) {
 		var hitCnt atomic.Int32
 		spec := engine.Spec()
 
+		// Fixed SigTime for deterministic test vectors: 2024-01-01 00:00:00 UTC
+		fixedSigTime := optional.Some(time.Duration(1704067200000) * time.Millisecond)
+
 		handler := func(args ndn.InterestHandlerArgs) {
 			hitCnt.Add(1)
 			require.Equal(t, []byte(
@@ -279,6 +282,7 @@ func TestRoute(t *testing.T) {
 				args.Interest.Name(),
 				&ndn.DataConfig{
 					ContentType: optional.Some(ndn.ContentTypeBlob),
+					SigTime:     fixedSigTime,
 				},
 				enc.Wire{[]byte("test")},
 				sig.NewTestSigner(enc.Name{}, 0))
@@ -292,8 +296,8 @@ func TestRoute(t *testing.T) {
 		require.Equal(t, int32(1), hitCnt.Load())
 		buf := tu.NoErr(face.Consume())
 		require.Equal(t, enc.Buffer(
-			"\x06\x22\x07\x10\x08\x03not\x08\timportant\x14\x03\x18\x01\x00\x15\x04test"+
-				"\x16\x03\x1b\x01\xc8",
+			"\x06\x2c\x07\x10\x08\x03not\x08\timportant\x14\x03\x18\x01\x00\x15\x04test"+
+				"\x16\x0d\x1b\x01\xc8(\x08\x00\x00\x01\x8c\xc2Q\xf4\x00",
 		), buf)
 	})
 }
@@ -303,6 +307,8 @@ func TestPitToken(t *testing.T) {
 	executeTest(t, func(face *face.DummyFace, engine *basic_engine.Engine, timer *basic_engine.DummyTimer) {
 		hitCnt := 0
 		spec := engine.Spec()
+		// Fixed SigTime for deterministic test vectors: 2024-01-01 00:00:00 UTC
+		fixedSigTime := optional.Some(time.Duration(1704067200000) * time.Millisecond)
 
 		handler := func(args ndn.InterestHandlerArgs) {
 			hitCnt += 1
@@ -310,6 +316,7 @@ func TestPitToken(t *testing.T) {
 				args.Interest.Name(),
 				&ndn.DataConfig{
 					ContentType: optional.Some(ndn.ContentTypeBlob),
+					SigTime:     fixedSigTime,
 				},
 				enc.Wire{[]byte("test")},
 				sig.NewTestSigner(enc.Name{}, 0))
@@ -325,9 +332,9 @@ func TestPitToken(t *testing.T) {
 		))
 		buf := tu.NoErr(face.Consume())
 		require.Equal(t, enc.Buffer(
-			"\x64\x2c\x62\x04\x01\x02\x03\x04\x50\x24"+
-				"\x06\x22\x07\x10\x08\x03not\x08\timportant\x14\x03\x18\x01\x00\x15\x04test"+
-				"\x16\x03\x1b\x01\xc8",
+			"\x64\x36\x62\x04\x01\x02\x03\x04\x50\x2e"+
+				"\x06\x2c\x07\x10\x08\x03not\x08\timportant\x14\x03\x18\x01\x00\x15\x04test"+
+				"\x16\x0d\x1b\x01\xc8(\x08\x00\x00\x01\x8c\xc2Q\xf4\x00",
 		), buf)
 	})
 }

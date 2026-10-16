@@ -8,7 +8,7 @@ import (
 	"github.com/named-data/ndnd/std/ndn"
 )
 
-// CertCache is a memcache for certificates.
+// CertCache is a memcache for certificates and their validation evidence.
 // It stores certificates by their name and key locator.
 // Only the most recent certificate is stored.
 // The cache is thread-safe.
@@ -17,13 +17,21 @@ type CertCache struct {
 }
 
 type certCacheEntry struct {
-	data   ndn.Data
-	expiry time.Time
+	data       ndn.Data
+	sigCovered enc.Wire
+	rawData    enc.Wire
+	expiry     time.Time
 }
 
-// CertListCache stores validated CertList Data packets keyed by prefix and full name.
+// CertListCache stores validated CertList Data packets and their raw wire,
+// keyed by prefix and full name.
 type CertListCache struct {
 	cache sync.Map
+}
+
+type certListCacheEntry struct {
+	data    ndn.Data
+	rawData enc.Wire
 }
 
 // NewCertListCache creates a new CertListCache.
@@ -33,28 +41,39 @@ func NewCertListCache() *CertListCache {
 
 // Get returns a cached CertList for the given prefix or full name.
 func (clc *CertListCache) Get(prefix enc.Name) (ndn.Data, bool) {
+	entry, ok := clc.get(prefix)
+	return entry.data, ok
+}
+
+func (clc *CertListCache) get(prefix enc.Name) (certListCacheEntry, bool) {
 	if v, ok := clc.cache.Load(prefix.TlvStr()); ok {
-		if data, ok := v.(ndn.Data); ok {
-			return data, true
+		if entry, ok := v.(certListCacheEntry); ok {
+			return entry, true
 		}
 	}
-	return nil, false
+	return certListCacheEntry{}, false
 }
 
 // Put stores a CertList, preferring newer versions.
 func (clc *CertListCache) Put(anchorKeyName enc.Name, data ndn.Data) {
+	clc.put(anchorKeyName, data, nil)
+}
+
+// put stores a CertList with its complete wire, when available.
+func (clc *CertListCache) put(anchorKeyName enc.Name, data ndn.Data, rawData enc.Wire) {
 	prefix, err := CertListPrefix(anchorKeyName)
 	if err != nil {
 		return
 	}
 	key := prefix.TlvStr()
 	if v, ok := clc.cache.Load(key); ok {
-		if old, ok := v.(ndn.Data); ok && !isCertListNewer(old, data) {
+		if old, ok := v.(certListCacheEntry); ok && !isCertListNewer(old.data, data) {
 			return
 		}
 	}
-	clc.cache.Store(key, data)
-	clc.cache.Store(data.Name().TlvStr(), data)
+	entry := certListCacheEntry{data: data, rawData: rawData}
+	clc.cache.Store(key, entry)
+	clc.cache.Store(data.Name().TlvStr(), entry)
 }
 
 func isCertListNewer(old, new ndn.Data) bool {
@@ -68,30 +87,43 @@ func NewCertCache() *CertCache {
 
 // Get retrieves a certificate from the cache.
 // The name can be either the certificate name or the key locator.
-// If the cert expires in less than 5 minutes, it is considered stale.
+// Entries are retained until five minutes after certificate expiry.
 func (cc *CertCache) Get(name enc.Name) (ndn.Data, bool) {
+	entry, ok := cc.get(name)
+	return entry.data, ok
+}
+
+// get retrieves the certificate and its signature verification evidence.
+func (cc *CertCache) get(name enc.Name) (certCacheEntry, bool) {
 	str := name.TlvStr()
 	if v, ok := cc.cache.Load(str); ok {
 		entry := v.(certCacheEntry)
 		if entry.expiry.Add(5 * time.Minute).After(time.Now()) {
-			return entry.data, true
+			return entry, true
 		} else {
 			cc.cache.Delete(str)
 		}
 	}
-	return nil, false
+	return certCacheEntry{}, false
 }
 
-// Put stores a certificate in the cache
+// Put stores certificate data without signature verification evidence.
 func (cc *CertCache) Put(cert ndn.Data) {
+	cc.put(cert, nil, nil)
+}
+
+// put stores a certificate with the wire needed to identify and revalidate it.
+func (cc *CertCache) put(cert ndn.Data, sigCovered enc.Wire, rawData enc.Wire) {
 	_, expiry := cert.Signature().Validity()
 	if !expiry.IsSet() {
 		return // huh?
 	}
 
 	entry := certCacheEntry{
-		data:   cert,
-		expiry: expiry.Unwrap(),
+		data:       cert,
+		sigCovered: sigCovered,
+		rawData:    rawData,
+		expiry:     expiry.Unwrap(),
 	}
 
 	// Store the certificate by its own name

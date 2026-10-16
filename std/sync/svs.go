@@ -17,6 +17,8 @@ import (
 	"github.com/named-data/ndnd/std/utils"
 )
 
+const SvSyncVersion = 3
+
 type SvSync struct {
 	o SvSyncOpts
 
@@ -78,8 +80,9 @@ type SvSyncOpts struct {
 
 	// Passive mode does not send sign Sync Interests
 	Passive bool
-	// IgnoreValidity ignores validity period in the validation chain
-	IgnoreValidity optional.Optional[bool]
+	// OnCertExpired decides whether an expired certificate may be used.
+	// A nil callback rejects expired certificates.
+	OnCertExpired ndn.CertExpiredCallback
 }
 
 type SvSyncUpdate struct {
@@ -158,7 +161,7 @@ func NewSvSync(opts SvSyncOpts) *SvSync {
 		mutex:  sync.Mutex{},
 		state:  initialState,
 		mtime:  make(map[string]time.Time),
-		prefix: opts.GroupPrefix.Append(enc.NewVersionComponent(3)),
+		prefix: opts.GroupPrefix.Append(enc.NewVersionComponent(SvSyncVersion)),
 
 		suppress: false,
 		merge:    NewSvMap[uint64](0),
@@ -181,6 +184,12 @@ func (s *SvSync) SuppressionStats() SuppressStats {
 // Instance log identifier
 func (s *SvSync) String() string {
 	return fmt.Sprintf("svs (%s)", s.o.GroupPrefix)
+}
+
+// SyncPrefix is the sync route prefix for this instance.
+// It should be used in the prefix registration / announcement.
+func (s *SvSync) SyncPrefix() enc.Name {
+	return s.prefix
 }
 
 // Start the SV Sync instance.
@@ -513,7 +522,7 @@ func (s *SvSync) encodeSyncData() enc.Wire {
 	svWire := (&spec_svs.SvsData{StateVector: sv}).Encode()
 
 	// SVS v3 Sync Data
-	name := s.o.SyncDataName.WithVersion(enc.VersionUnixMicro)
+	name := s.o.SyncDataName.WithVersion(SvSyncVersion)
 
 	// Sign Sync Data
 	signer := s.o.Client.SuggestSigner(name)
@@ -559,9 +568,9 @@ func (s *SvSync) onSyncData(dataWire enc.Wire) {
 
 	// Validate signature
 	s.o.Client.ValidateExt(ndn.ValidateExtArgs{
-		Data:           data,
-		SigCovered:     sigCov,
-		IgnoreValidity: s.o.IgnoreValidity,
+		Data:          data,
+		SigCovered:    sigCov,
+		OnCertExpired: s.o.OnCertExpired,
 		Callback: func(valid bool, err error) {
 			if !valid || err != nil {
 				log.Warn(s, "SvSync failed to validate signature", "name", data.Name(), "valid", valid, "err", err)
