@@ -1,7 +1,6 @@
 package sec
 
 import (
-	"github.com/named-data/ndnd/tools/lvs"
 	"github.com/spf13/cobra"
 )
 
@@ -20,7 +19,6 @@ Reference:
 	new(ToolSignCert).configure(cmd)
 	new(ToolKeychain).configure(cmd)
 	new(ToolPem).configure(cmd)
-	new(lvs.ToolLvs).Configure(cmd)
 	cmd.AddCommand(CmdCertServer())
 	return cmd
 }
