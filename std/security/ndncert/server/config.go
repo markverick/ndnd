@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/mail"
@@ -12,10 +13,22 @@ import (
 	spec "github.com/named-data/ndnd/std/ndn/spec_2022"
 	"github.com/named-data/ndnd/std/security/ndncert"
 	"github.com/named-data/ndnd/std/security/ndncert/tlv"
+	"github.com/named-data/ndnd/std/types/optional"
 )
 
 type ChallengeConfig struct {
 	Name string `json:"challenge"`
+}
+
+type ProbeParameterConfig struct {
+	Key string `json:"probe-parameter-key"`
+}
+
+type RedirectConfig struct {
+	CaPrefix    string `json:"ca-prefix"`
+	Certificate string `json:"certificate"`
+	PolicyType  string `json:"policy-type"`
+	PolicyParam string `json:"policy-param"`
 }
 
 type EmailChallengeConfig struct {
@@ -28,11 +41,15 @@ type EmailChallengeConfig struct {
 }
 
 type CaConfig struct {
-	CaPrefix            string               `json:"ca-prefix"`
-	CaInfo              string               `json:"ca-info"`
-	MaxValidityPeriod   string               `json:"max-validity-period"`
-	SupportedChallenges []ChallengeConfig    `json:"supported-challenges"`
-	Email               EmailChallengeConfig `json:"email"`
+	CaPrefix            string                 `json:"ca-prefix"`
+	CaInfo              string                 `json:"ca-info"`
+	MaxValidityPeriod   string                 `json:"max-validity-period"`
+	MaxSuffixLength     string                 `json:"max-suffix-length"`
+	ProbeParameters     []ProbeParameterConfig `json:"probe-parameters"`
+	NameAssignment      map[string]string      `json:"name-assignment"`
+	RedirectTo          []RedirectConfig       `json:"redirect-to"`
+	SupportedChallenges []ChallengeConfig      `json:"supported-challenges"`
+	Email               EmailChallengeConfig   `json:"email"`
 
 	CaCertPath string `json:"-"`
 	CaKeyPath  string `json:"-"`
@@ -55,6 +72,27 @@ func LoadConfig(path string) (*CaConfig, error) {
 	}
 	if cfg.MaxValidityPeriod == "" {
 		return nil, fmt.Errorf("max-validity-period is required")
+	}
+	if cfg.MaxSuffixLength != "" {
+		if _, err := strconv.ParseUint(cfg.MaxSuffixLength, 10, 64); err != nil {
+			return nil, fmt.Errorf("invalid max-suffix-length: %w", err)
+		}
+	}
+	for _, param := range cfg.ProbeParameters {
+		if strings.TrimSpace(param.Key) == "" {
+			return nil, fmt.Errorf("probe-parameter-key must not be empty")
+		}
+	}
+	for _, redirect := range cfg.RedirectTo {
+		if redirect.PolicyType != "email" {
+			return nil, fmt.Errorf("unsupported redirect policy type %q", redirect.PolicyType)
+		}
+		if redirect.CaPrefix == "" || redirect.Certificate == "" || redirect.PolicyParam == "" {
+			return nil, fmt.Errorf("redirect-to requires ca-prefix, certificate, and policy-param")
+		}
+		if _, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(redirect.Certificate), "")); err != nil {
+			return nil, fmt.Errorf("invalid redirect certificate: %w", err)
+		}
 	}
 	if cfg.SupportsChallenge(ndncert.KwEmail) {
 		if err := cfg.Email.Validate(); err != nil {
@@ -95,12 +133,24 @@ func (c *CaConfig) ToCaProfile(caCertWire enc.Wire) (*tlv.CaProfile, error) {
 		return nil, fmt.Errorf("invalid max-validity-period: %w", err)
 	}
 
-	return &tlv.CaProfile{
+	profile := &tlv.CaProfile{
 		CaPrefix:       &spec.NameContainer{Name: caName},
 		CaInfo:         c.CaInfo,
+		ParamKey:       make([]string, 0, len(c.ProbeParameters)),
 		MaxValidPeriod: mv,
 		CaCert:         caCertWire,
-	}, nil
+	}
+	for _, param := range c.ProbeParameters {
+		profile.ParamKey = append(profile.ParamKey, param.Key)
+	}
+	if c.MaxSuffixLength != "" {
+		maxSuffixLength, err := strconv.ParseUint(c.MaxSuffixLength, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid max-suffix-length: %w", err)
+		}
+		profile.MaxSuffixLength = optional.Some(maxSuffixLength)
+	}
+	return profile, nil
 }
 
 func (c *CaConfig) GetMaxValidityPeriodSeconds() (uint64, error) {

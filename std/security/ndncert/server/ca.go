@@ -3,8 +3,11 @@ package server
 import (
 	"crypto/ecdh"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	enc "github.com/named-data/ndnd/std/encoding"
@@ -15,6 +18,7 @@ import (
 	"github.com/named-data/ndnd/std/security"
 	"github.com/named-data/ndnd/std/security/ndncert"
 	"github.com/named-data/ndnd/std/security/ndncert/tlv"
+	"github.com/named-data/ndnd/std/security/signer"
 	"github.com/named-data/ndnd/std/types/optional"
 	"github.com/named-data/ndnd/std/utils"
 )
@@ -77,6 +81,9 @@ func (ca *CaServer) Start() error {
 	if err := ca.engine.RegisterRoute(ca.caPrefix); err != nil {
 		return fmt.Errorf("failed to register route: %w", err)
 	}
+	if err := storeCaCertificate(ca.engine.Spec(), ca.objectStore, ca.caCertWire); err != nil {
+		return fmt.Errorf("failed to store CA certificate: %w", err)
+	}
 
 	base := ca.caPrefix.Append(enc.NewGenericComponent("CA"))
 
@@ -100,6 +107,11 @@ func (ca *CaServer) Start() error {
 		return fmt.Errorf("failed to attach INFO handler: %w", err)
 	}
 
+	probePrefix := base.Append(enc.NewGenericComponent("PROBE"))
+	if err := ca.engine.AttachHandler(probePrefix, ca.onProbe); err != nil {
+		return fmt.Errorf("failed to attach PROBE handler: %w", err)
+	}
+
 	newPrefix := base.Append(enc.NewGenericComponent("NEW"))
 	if err := ca.engine.AttachHandler(newPrefix, ca.onNew); err != nil {
 		return fmt.Errorf("failed to attach NEW handler: %w", err)
@@ -117,14 +129,142 @@ func (ca *CaServer) Start() error {
 	return nil
 }
 
+func storeCaCertificate(packetSpec ndn.Spec, store ndn.Store, certWire enc.Wire) error {
+	certData, _, err := packetSpec.ReadData(enc.NewWireView(certWire))
+	if err != nil {
+		return err
+	}
+	wire := certWire.Join()
+	digest := sha256.Sum256(wire)
+	fullName := certData.Name().Append(enc.Component{
+		Typ: enc.TypeImplicitSha256DigestComponent,
+		Val: digest[:],
+	})
+	return store.Put(fullName, wire)
+}
+
 func (ca *CaServer) Stop() error {
 	base := ca.caPrefix.Append(enc.NewGenericComponent("CA"))
 
 	ca.engine.DetachHandler(base.Append(enc.NewGenericComponent("INFO")))
+	ca.engine.DetachHandler(base.Append(enc.NewGenericComponent("PROBE")))
 	ca.engine.DetachHandler(base.Append(enc.NewGenericComponent("NEW")))
 	ca.engine.DetachHandler(base.Append(enc.NewGenericComponent("CHALLENGE")))
 	ca.engine.DetachHandler(ca.caPrefix)
 	return nil
+}
+
+func (ca *CaServer) onProbe(args ndn.InterestHandlerArgs) {
+	appParam := args.Interest.AppParam()
+	if appParam == nil {
+		ca.sendError(args, 4, "missing PROBE parameters")
+		return
+	}
+
+	probeReq, err := tlv.ParseProbeReq(enc.NewWireView(appParam), false)
+	if err != nil {
+		ca.sendError(args, 4, fmt.Sprintf("invalid PROBE parameters: %v", err))
+		return
+	}
+
+	probeRes := &tlv.ProbeRes{}
+	for _, probeParam := range ca.config.ProbeParameters {
+		format, ok := ca.config.NameAssignment[probeParam.Key]
+		if !ok {
+			continue
+		}
+		value, ok := probeReq.Params[probeParam.Key]
+		if !ok {
+			continue
+		}
+		assignedName, ok := assignEmailName(format, value)
+		if !ok {
+			continue
+		}
+		fullName := ca.caPrefix.Append(assignedName...)
+		probeRes.Vals = append(probeRes.Vals, &tlv.ProbeResVals{
+			Response:        fullName,
+			MaxSuffixLength: ca.caProfile.MaxSuffixLength,
+		})
+	}
+
+	for _, redirect := range ca.config.RedirectTo {
+		value, ok := probeReq.Params["email"]
+		if !ok || !emailDomainMatches(string(value), redirect.PolicyParam) {
+			continue
+		}
+
+		certWire, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(redirect.Certificate), ""))
+		if err != nil {
+			ca.sendError(args, 100, "invalid redirect certificate")
+			return
+		}
+		certData, _, err := ca.engine.Spec().ReadData(enc.NewWireView(enc.Wire{certWire}))
+		if err != nil {
+			ca.sendError(args, 100, "invalid redirect certificate")
+			return
+		}
+		redirectPrefix, err := enc.NameFromStr(redirect.CaPrefix)
+		identity, identityErr := security.GetIdentityFromCertName(certData.Name())
+		if err != nil || identityErr != nil || !identity.Equal(redirectPrefix) {
+			ca.sendError(args, 100, "redirect certificate identity does not match ca-prefix")
+			return
+		}
+		digest := sha256.Sum256(certWire)
+		certName := certData.Name().Append(enc.Component{
+			Typ: enc.TypeImplicitSha256DigestComponent,
+			Val: digest[:],
+		})
+		probeRes.RedirectPrefix = &spec.NameContainer{Name: certName}
+		break
+	}
+
+	if len(probeRes.Vals) == 0 && probeRes.RedirectPrefix == nil {
+		ca.sendError(args, 4, "no name assignment or redirect matched the PROBE parameters")
+		return
+	}
+
+	cfg := &ndn.DataConfig{Freshness: optional.Some(4 * time.Second)}
+	data, err := ca.engine.Spec().MakeData(args.Interest.Name(), cfg, probeRes.Encode(), ca.signer)
+	if err != nil {
+		fmt.Printf("ERROR: Failed to create PROBE response: %v\n", err)
+		return
+	}
+	args.Reply(data.Wire)
+}
+
+func assignEmailName(format string, email []byte) (enc.Name, bool) {
+	address := string(email)
+	separator := strings.LastIndexByte(address, '@')
+	if separator <= 0 || separator == len(address)-1 {
+		return nil, false
+	}
+
+	formatName, err := enc.NameFromStr(format)
+	if err != nil {
+		return nil, false
+	}
+	domain := strings.Split(address[separator+1:], ".")
+	result := make(enc.Name, 0, len(domain)+1)
+	formatIndex := 0
+	for i := len(domain) - 1; i >= 0; i-- {
+		label := domain[i]
+		if label == "" {
+			return nil, false
+		}
+		if formatIndex < len(formatName) && formatName[formatIndex].Typ == enc.TypeGenericNameComponent && string(formatName[formatIndex].Val) == label {
+			formatIndex++
+			continue
+		}
+		result = append(result, enc.NewGenericComponent(label))
+	}
+	result = append(result, enc.NewGenericComponent(address[:separator]))
+	return result, true
+}
+
+func emailDomainMatches(address, policyDomain string) bool {
+	separator := strings.LastIndexByte(address, '@')
+	return separator > 0 && address[separator+1:] == policyDomain
 }
 
 // handle INFO - serves CA profile using RDR from object store
@@ -181,9 +321,13 @@ func (ca *CaServer) onNew(args ndn.InterestHandlerArgs) {
 		return
 	}
 
-	certReq, _, err := ca.engine.Spec().ReadData(enc.NewWireView(newReq.CertReq))
+	certReq, certReqSigCovered, err := ca.engine.Spec().ReadData(enc.NewWireView(newReq.CertReq))
 	if err != nil {
 		ca.sendError(args, 5, fmt.Sprintf("invalid certificate request: %v", err))
+		return
+	}
+	if code, info := ca.validateCertRequest(certReq, certReqSigCovered, args.Interest, args.SigCovered); code != 0 {
+		ca.sendError(args, code, info)
 		return
 	}
 	fmt.Printf("INFO: received NEW request for identity: %s\n", certReq.Name())
@@ -259,6 +403,57 @@ func (ca *CaServer) onNew(args ndn.InterestHandlerArgs) {
 	}
 
 	args.Reply(data.Wire)
+}
+
+func (ca *CaServer) validateCertRequest(certReq ndn.Data, wire enc.Wire, interest ndn.Interest, interestCovered enc.Wire) (uint64, string) {
+	certData, ok := certReq.(*spec.Data)
+	if !ok {
+		return 5, "invalid certificate request data"
+	}
+	identity, err := security.GetIdentityFromCertName(certReq.Name())
+	if err != nil || !ca.caPrefix.IsPrefix(identity) || len(identity) <= len(ca.caPrefix) {
+		return 5, "requested identity is not allowed by this CA"
+	}
+
+	if ca.caProfile.MaxSuffixLength.IsSet() {
+		maxSuffixLength := ca.caProfile.MaxSuffixLength.Unwrap()
+		if uint64(len(identity)-len(ca.caPrefix)) > maxSuffixLength {
+			return 5, "requested identity exceeds max-suffix-length"
+		}
+	}
+
+	keyName, err := security.GetKeyNameFromCertName(certReq.Name())
+	if err != nil || !certData.KeyName().Equal(keyName) {
+		return 5, "certificate request key locator does not match its name"
+	}
+	valid, err := signer.ValidateData(certReq, wire, certReq)
+	if err != nil || !valid {
+		return 7, "certificate request self-signature is invalid"
+	}
+	if !interest.Signature().KeyName().Equal(keyName) {
+		return 7, "NEW Interest key locator does not match certificate request"
+	}
+	valid, err = signer.ValidateInterest(interest, interestCovered, certReq)
+	if err != nil || !valid {
+		return 7, "NEW Interest signature is invalid"
+	}
+
+	notBefore, notAfter := certData.Validity()
+	if !notBefore.IsSet() || !notAfter.IsSet() {
+		return 6, "certificate request has no validity period"
+	}
+	start := notBefore.Unwrap()
+	end := notAfter.Unwrap()
+	maxValiditySeconds, err := ca.config.GetMaxValidityPeriodSeconds()
+	maxValidity := time.Duration(maxValiditySeconds) * time.Second
+	now := time.Now()
+	grace := 120 * time.Second
+	if err != nil || end.Before(start) || start.Before(now.Add(-grace)) ||
+		end.After(now.Add(maxValidity+grace)) || end.Sub(start) > maxValidity {
+		return 6, "requested validity period is invalid or exceeds max-validity-period"
+	}
+
+	return 0, ""
 }
 
 // CHALLENGE handler
@@ -471,22 +666,21 @@ func (ca *CaServer) issueCertificate(state *RequestState) (enc.Wire, error) {
 	if err != nil {
 		return enc.Wire{}, fmt.Errorf("failed to parse certificate request: %w", err)
 	}
-	maxValiditySec, err := ca.config.GetMaxValidityPeriodSeconds()
-	if err != nil {
-		return enc.Wire{}, fmt.Errorf("invalid max validity period: %w", err)
+	certData, ok := certReqData.(*spec.Data)
+	if !ok {
+		return enc.Wire{}, fmt.Errorf("invalid certificate request data")
 	}
-
-	// issue the certificate
-	now := time.Now()
-	notBefore := now
-	notAfter := now.Add(time.Duration(maxValiditySec) * time.Second)
+	notBefore, notAfter := certData.Validity()
+	if !notBefore.IsSet() || !notAfter.IsSet() {
+		return enc.Wire{}, fmt.Errorf("certificate request has no validity period")
+	}
 
 	certWire, err := security.SignCert(security.SignCertArgs{
 		Signer:    ca.signer,
 		Data:      certReqData,
 		IssuerId:  enc.NewGenericComponent("NDNCERT"),
-		NotBefore: notBefore,
-		NotAfter:  notAfter,
+		NotBefore: notBefore.Unwrap(),
+		NotAfter:  notAfter.Unwrap(),
 	})
 	if err != nil {
 		return enc.Wire{}, fmt.Errorf("failed to sign certificate: %w", err)
