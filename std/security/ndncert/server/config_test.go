@@ -16,7 +16,15 @@ func TestLoadConfigCPP(t *testing.T) {
   "ca-prefix": "/example",
   "ca-info": "An example NDNCERT CA",
   "max-validity-period": "1296000",
-  "supported-challenges": [{"challenge": "pin"}, {"challenge": "email"}]
+	"supported-challenges": [{"challenge": "pin"}, {"challenge": "email"}],
+	"email": {
+		"smtp-server": "smtp.example.org",
+		"smtp-port": 587,
+		"smtp-username": "ndncert",
+		"smtp-password-env": "NDNCERT_SMTP_PASSWORD",
+		"from": "NDN Certificate Robot <noreply@example.org>",
+		"subject": "Your NDNCERT verification code"
+	}
 }`
 
 	dir := t.TempDir()
@@ -30,6 +38,7 @@ func TestLoadConfigCPP(t *testing.T) {
 	require.Equal(t, 2, len(cfg.SupportedChallenges))
 	require.True(t, cfg.SupportsChallenge("pin"))
 	require.True(t, cfg.SupportsChallenge("email"))
+	require.Equal(t, "smtp.example.org", cfg.Email.SMTPServer)
 	require.False(t, cfg.SupportsChallenge("dns"))
 
 	maxVal := tu.NoErr(cfg.GetMaxValidityPeriodSeconds())

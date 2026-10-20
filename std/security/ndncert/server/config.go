@@ -3,11 +3,14 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"net/mail"
 	"os"
 	"strconv"
+	"strings"
 
 	enc "github.com/named-data/ndnd/std/encoding"
 	spec "github.com/named-data/ndnd/std/ndn/spec_2022"
+	"github.com/named-data/ndnd/std/security/ndncert"
 	"github.com/named-data/ndnd/std/security/ndncert/tlv"
 )
 
@@ -15,11 +18,21 @@ type ChallengeConfig struct {
 	Name string `json:"challenge"`
 }
 
+type EmailChallengeConfig struct {
+	SMTPServer      string `json:"smtp-server"`
+	SMTPPort        int    `json:"smtp-port"`
+	SMTPUsername    string `json:"smtp-username"`
+	SMTPPasswordEnv string `json:"smtp-password-env"`
+	From            string `json:"from"`
+	Subject         string `json:"subject"`
+}
+
 type CaConfig struct {
-	CaPrefix            string            `json:"ca-prefix"`
-	CaInfo              string            `json:"ca-info"`
-	MaxValidityPeriod   string            `json:"max-validity-period"`
-	SupportedChallenges []ChallengeConfig `json:"supported-challenges"`
+	CaPrefix            string               `json:"ca-prefix"`
+	CaInfo              string               `json:"ca-info"`
+	MaxValidityPeriod   string               `json:"max-validity-period"`
+	SupportedChallenges []ChallengeConfig    `json:"supported-challenges"`
+	Email               EmailChallengeConfig `json:"email"`
 
 	CaCertPath string `json:"-"`
 	CaKeyPath  string `json:"-"`
@@ -43,8 +56,32 @@ func LoadConfig(path string) (*CaConfig, error) {
 	if cfg.MaxValidityPeriod == "" {
 		return nil, fmt.Errorf("max-validity-period is required")
 	}
+	if cfg.SupportsChallenge(ndncert.KwEmail) {
+		if err := cfg.Email.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid email challenge configuration: %w", err)
+		}
+	}
 
 	return &cfg, nil
+}
+
+func (c EmailChallengeConfig) Validate() error {
+	if strings.TrimSpace(c.SMTPServer) == "" || strings.ContainsAny(c.SMTPServer, " \t\r\n") {
+		return fmt.Errorf("smtp-server is required and must be a hostname")
+	}
+	if c.SMTPPort < 0 || c.SMTPPort > 65535 {
+		return fmt.Errorf("smtp-port must be 0 (default 587) or between 1 and 65535")
+	}
+	if _, err := mail.ParseAddress(c.From); err != nil {
+		return fmt.Errorf("invalid from address: %w", err)
+	}
+	if strings.ContainsAny(c.Subject, "\r\n") {
+		return fmt.Errorf("subject must not contain newlines")
+	}
+	if c.SMTPUsername != "" && c.SMTPPasswordEnv == "" {
+		return fmt.Errorf("smtp-password-env is required when smtp-username is set")
+	}
+	return nil
 }
 
 func (c *CaConfig) ToCaProfile(caCertWire enc.Wire) (*tlv.CaProfile, error) {

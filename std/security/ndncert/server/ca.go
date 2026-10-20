@@ -29,6 +29,7 @@ type CaServer struct {
 	caPrefix    enc.Name
 	caProfile   *tlv.CaProfile
 	objectStore ndn.Store // RDR store - needed for serving CA profile
+	emailSender EmailSender
 	// TODO: remove for final version, DNSResolver is only useful for testing with mock dns records
 	// 	if nil then net.LookupTXT is used
 	DNSResolver func(domain string) ([]string, error)
@@ -66,6 +67,10 @@ func NewCaServer(engine ndn.Engine, config *CaConfig, caCertWire enc.Wire, signe
 
 func (ca *CaServer) SetObjectStore(store ndn.Store) {
 	ca.objectStore = store
+}
+
+func (ca *CaServer) SetEmailSender(sender EmailSender) {
+	ca.emailSender = sender
 }
 
 func (ca *CaServer) Start() error {
@@ -334,6 +339,12 @@ func (ca *CaServer) onChallenge(args ndn.InterestHandlerArgs) {
 		}
 		responseParams, challengeStatus, challengeErr = handler.HandleChallenge(params, state)
 		fmt.Printf("INFO: DNS challenge result: status=%s, success=%v\n", challengeStatus, state.Status == StatusSuccess)
+	case ndncert.KwEmail:
+		handler := &ChallengeEmailHandler{
+			Sender:  ca.emailSender,
+			Subject: ca.config.Email.Subject,
+		}
+		responseParams, challengeStatus, challengeErr = handler.HandleChallenge(params, state)
 
 	default:
 		ca.sendError(args, 11, fmt.Sprintf("unsupported challenge type: %s", state.ChallengeType))

@@ -16,6 +16,7 @@ import (
 	"github.com/named-data/ndnd/std/object/storage"
 	sec "github.com/named-data/ndnd/std/security"
 	"github.com/named-data/ndnd/std/security/keychain"
+	"github.com/named-data/ndnd/std/security/ndncert"
 	"github.com/named-data/ndnd/std/security/ndncert/server"
 	sig "github.com/named-data/ndnd/std/security/signer"
 	"github.com/named-data/ndnd/std/security/trust_schema"
@@ -33,10 +34,10 @@ func CmdCertServer() *cobra.Command {
 	srv := CertServer{}
 
 	cmd := &cobra.Command{
-		Use:     "certca CA-CONFIG CA-CERT CA-KEY",
-		Short:   "NDNCERT Certificate Authority Server",
-		Args:    cobra.ExactArgs(3),
-		Run:     srv.run,
+		Use:   "certca CA-CONFIG CA-CERT CA-KEY",
+		Short: "NDNCERT Certificate Authority Server",
+		Args:  cobra.ExactArgs(3),
+		Run:   srv.run,
 	}
 
 	cmd.Flags().BoolVar(&srv.mockDNS, "mock-dns", false,
@@ -101,6 +102,18 @@ func (c *CertServer) run(_ *cobra.Command, args []string) {
 	if err != nil {
 		log.Fatal(c, "Failed to create CA", "err", err)
 		return
+	}
+	if config.SupportsChallenge(ndncert.KwEmail) {
+		password := ""
+		if config.Email.SMTPPasswordEnv != "" {
+			password = os.Getenv(config.Email.SMTPPasswordEnv)
+		}
+		sender, err := server.NewSMTPEmailSender(config.Email, password)
+		if err != nil {
+			log.Fatal(c, "Invalid email challenge configuration", "err", err)
+			return
+		}
+		caServer.SetEmailSender(sender)
 	}
 
 	if c.dataDir != "" {
