@@ -79,10 +79,10 @@ func (ps *PingServer) run(_ *cobra.Command, args []string) {
 	defer cli.Stop()
 
 	cli.AnnouncePrefix(ndn.Announcement{
-		Name:   name,
+		Name:   ps.name,
 		Expose: ps.expose,
 	})
-	defer cli.WithdrawPrefix(name, nil)
+	defer cli.WithdrawPrefix(ps.name, nil)
 
 	fmt.Printf("PING SERVER %s\n", ps.name)
 	defer ps.stats()
